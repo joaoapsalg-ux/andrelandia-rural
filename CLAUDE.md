@@ -76,7 +76,7 @@ tools/dev/shot.js     captura de tela headless (Playwright + SwiftShader) para c
 | Arquivo | O que é |
 |---|---|
 | dem/anadem.png | ANADEM 30 m em PNG Terrarium (R·256 + G + B/256 − 32768), 1671×1522 |
-| img/town/c_{r}_{c}.webp | 2 m (CBERS-4A 23/07/2026) em 255 células do município (5 do sul ficam fora da cena), ~95 MB, gerados pelo robô "Imagem de 2 m — município"; lista em TOWN_CELLS (grid.js) |
+| img/town/c_{r}_{c}.webp | 2 m (CBERS-4A 23/07/2026) em 252 células do município, ~93 MB, gerados pelo robô "Imagem de 2 m — município"; lista em TOWN_CELLS (grid.js). Conferidos em 04/10/2026: 16_3, 17_9 e 16_4 saíram (borda da cena, era o 4 m ampliado) e 20 blocos tiveram a névoa da cena trocada pelo 4 m no navegador (`haze_fallback`, também no build_cbers2m.py — não testado lá) |
 | img/overview.jpg, img/cbers/t_{ty}_{tx}.jpg | CBERS-4A fundido com cor Sentinel-2: visão geral e 4 m (blocos de 2×2 células) |
 | layers/vigor_{aguas,seca}_2026.webp | NDVI da Sentinel-2 (águas jan–abr p70, seca jul–set mediana), cinza 8 bits na grade do car_id (3072×2993): 0 = sem dado, NDVI = (v − 1)/254 − 0,1 |
 | layers/vigor.json | robô "Vigor da pastagem": anos 2019–2026, datas usadas, pasto do município (quartis, séries) e por propriedade [ha de pasto, % fraco, % forte, NDVI águas, NDVI seca, [águas ano a ano], [seca ano a ano]] (NDVI × 100; pasto = MapBiomas 2025 classe 15) |

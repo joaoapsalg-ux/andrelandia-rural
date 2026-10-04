@@ -4,6 +4,7 @@
 # Só para desenvolvimento (escuta apenas nesta máquina), usado pelas páginas de tools/dev/:
 #   GET  /__raw/<arquivo>   lê um bruto de ANDRELANDIA_RAW (padrão ~/Downloads)
 #   POST /__save/<arquivo>  grava o corpo em data/muni/layers/<arquivo> (só .json)
+#   POST /__save-town/c_<linha>_<coluna>.webp  grava um bloco de 2 m em data/muni/img/town/ (correção feita no navegador)
 param([int]$Port = 8000)
 
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
@@ -32,6 +33,10 @@ while ($listener.IsListening) {
     if ($ctx.Request.HttpMethod -eq 'POST' -and $path -like '/__save/*' -and $name -match '^[a-z0-9_.-]+\.json$') {
       $ms = New-Object IO.MemoryStream; $ctx.Request.InputStream.CopyTo($ms)
       [IO.File]::WriteAllBytes((Join-Path $Root "data/muni/layers/$name"), $ms.ToArray())
+      $bytes = [Text.Encoding]::UTF8.GetBytes("ok $($ms.Length)")
+    } elseif ($ctx.Request.HttpMethod -eq 'POST' -and $path -like '/__save-town/*' -and $name -match '^c_\d{1,2}_\d{1,2}\.webp$') {
+      $ms = New-Object IO.MemoryStream; $ctx.Request.InputStream.CopyTo($ms)
+      [IO.File]::WriteAllBytes((Join-Path $Root "data/muni/img/town/$name"), $ms.ToArray())
       $bytes = [Text.Encoding]::UTF8.GetBytes("ok $($ms.Length)")
     } elseif ($path -like '/__raw/*' -and $name -match '^[A-Za-z0-9_.-]+$' -and [IO.File]::Exists((Join-Path $Raw $name))) {
       $bytes = [IO.File]::ReadAllBytes((Join-Path $Raw $name))

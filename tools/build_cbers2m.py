@@ -298,12 +298,15 @@ def run_stack(a, sk):
         if a.dehaze: med = dehaze(med, a.dehaze)
         if a.denoise: med, _ = denoise(med, a.denoise)
         if a.deconv: med = deconvolve(med, a.deconv * sk, a.deconv_k)
-        out = match_to_base(med, base_tile(r, c), valid, sk)
+        base = base_tile(r, c)
+        out = match_to_base(med, base, valid, sk)
         info = ''
         if a.deshadow:   # depois do casamento de cor: o bloco de 4 m também tem as sombras da hora da foto
             out, info = deshadow(out, LON, LAT, a.deshadow)
         if a.clarity: out = out + a.clarity * (out - np.stack([gaussian_filter(out[..., j], 6 * sk) for j in range(3)], -1))
         if a.unsharp: out = out + a.unsharp * (out - np.stack([gaussian_filter(out[..., j], 0.9 * sk) for j in range(3)], -1))
+        out, hz = haze_fallback(out, base)
+        info += f', névoa trocada pelo 4 m: {hz * 100:.0f}%'
         im8 = Image.fromarray(np.clip(out, 0, 255).astype(np.uint8))
         name = f'c_{r}_{c}{a.tag}.jpg'
         if a.format in ('jpg', 'both'):
@@ -320,6 +323,25 @@ def sample_window(ds, band, X, Y, order):
     src = ds.read(band, window=win, boundless=True, fill_value=0).astype(np.float32)
     wt = ds.window_transform(win)
     return map_coordinates(src, [(Y - wt.f) / wt.e - 0.5, (X - wt.c) / wt.a - 0.5], order=order, mode='nearest', prefilter=order > 1)
+
+
+def haze_fallback(out, base):
+    """onde o 2 m perdeu contraste local para o 4 m (névoa ou nuvem fina na cena), mistura suave para o 4 m.
+    Mesma conta da correção feita no navegador em 04/10/2026 (20 blocos): contraste em janelas de ~66 m, com o 2 m
+    levado à escala do 4 m; troca começa abaixo de 62% do contraste do 4 m e é total abaixo de 42% (os blocos bons
+    ficam acima de ~60% em 95% das janelas). Devolve (imagem, fração trocada)."""
+    from scipy.ndimage import uniform_filter
+    lum = lambda im: 0.299 * im[..., 0] + 0.587 * im[..., 1] + 0.114 * im[..., 2]
+    A, B = uniform_filter(lum(out), 3), lum(base)
+    R = 2 * round(out.shape[0] / 64) + 1
+
+    def sd(x):
+        m = uniform_filter(x, R)
+        return np.sqrt(np.maximum(uniform_filter(x * x, R) - m * m, 0))
+    t = np.clip((0.62 - sd(A) / (sd(B) + 2)) / 0.2, 0, 1)
+    k = 2 * round(out.shape[0] / 48) + 1
+    w = uniform_filter(uniform_filter(t * t * (3 - 2 * t), k), k)[..., None]
+    return out * (1 - w) + base * w, float(w.mean())
 
 
 def match_to_base(img, base, valid, sk):
