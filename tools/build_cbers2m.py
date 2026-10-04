@@ -168,13 +168,10 @@ def terrain_cos(LON, LAT):
     return cos_i, np.sin(np.radians(el)), az, el
 
 
-def deshadow(img, LON, LAT, strength):
-    """C-correction: clareia as encostas que estavam de costas para o sol na hora da foto (e escurece as de frente)"""
+def deshadow(img, LON, LAT, strength, c=0.6):
+    """C-correction: clareia as encostas que estavam de costas para o sol na hora da foto (e escurece as de frente).
+    c fixo para todas as células (ajustado por célula, variava de 0,3 a 3 e criaria degraus nas bordas)"""
     cos_i, cos_z, az, el = terrain_cos(LON, LAT)
-    L = lum(img)
-    ok = (L > 20) & (L < 240)
-    m, b = np.polyfit(cos_i[ok].ravel()[::7], L[ok].ravel()[::7], 1)   # brilho ~ m·cos_i + b
-    c = b / max(m, 1e-3)
     f = np.clip((cos_z + c) / (cos_i + c), 0.65, 1.7)
     f = 1 + strength * (gaussian_filter(f, 3) - 1)
     return img * f[..., None], f'sol {az:.0f}° / {el:.0f}°, c={c:.2f}, fator {f.min():.2f}–{f.max():.2f}'
