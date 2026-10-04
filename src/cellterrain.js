@@ -167,7 +167,10 @@ const FRAG = /* glsl */ `
       float nb = texture2D(uNdvi, ovUv).r * 255.0;
       base = nb < 0.5 ? vec3(0.55) : vigRamp(clamp(((nb - 1.0) / 254.0 - 0.1 - uVigR.x) / (uVigR.y - uVigR.x), 0.0, 1.0));
     }
-    vec3 col = base * mix(vec3(1.0), light * 1.05, sol > 0.5 ? 0.35 : 1.0);
+    vec3 lt = light * 1.05;
+    // mapas temáticos (uso do solo, vigor) legíveis com o sol baixo e de noite; de dia nada muda
+    if (land > 0.5 || vig > 0.5) lt = max(lt, vec3(0.72 * (1.0 - smoothstep(0.05, 0.45, uSunL.y))));
+    vec3 col = base * mix(vec3(1.0), lt, sol > 0.5 ? 0.35 : 1.0);
     // imagem de satélite: já traz sombras do horário da foto; aplica a luz pela metade + sombra projetada
     vec3 ov = texture2D(uOverview, ovUv).rgb;
     vec2 tuv = uTileRect.xy + uvc * uTileRect.zw;
@@ -709,7 +712,8 @@ export class CellTerrain {
       fragmentShader: /* glsl */ `uniform vec2 uC, uHalf; uniform float uFogNear, uFogFar; varying vec3 vW; varying float vVD;
         void main() {
           vec2 q = abs(vW.xz - uC) - uHalf;
-          float a = 0.55 * exp(-length(max(q, 0.0)) / 4500.0) * (1.0 - 0.6 * clamp((vVD - uFogNear) / (uFogFar - uFogNear), 0.0, 1.0));
+          float dq = length(max(q, 0.0));
+          float a = 0.55 * exp(-dq / 4500.0) * (1.0 - smoothstep(5500.0, 8800.0, dq)) * (1.0 - 0.6 * clamp((vVD - uFogNear) / (uFogFar - uFogNear), 0.0, 1.0));
           gl_FragColor = vec4(0.02, 0.03, 0.025, a);
         }`,
     }));

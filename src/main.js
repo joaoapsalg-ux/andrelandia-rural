@@ -291,8 +291,9 @@ async function start() {
   const today = new Date();
   const savedMin = parseInt(store.get('timeMin') ?? '', 10);
   lightUI.time.value = Number.isFinite(savedMin) ? savedMin : 16 * 60 + 20;   // fim da tarde: o relevo fica mais bonito
-  function applySun() {
-    const min = parseInt(lightUI.time.value, 10);
+  // min: minuto do dia (pode ter fração: a demonstração anda o sol sem os degraus de 5 min da régua) · save: guarda a hora
+  let demoMist = false;   // a demonstração mostra a neblina mesmo com a opção desligada
+  function applySun({ min = parseInt(lightUI.time.value, 10), save = true } = {}) {
     const date = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0) + (min + 180) * 60000);
     const pos = sunPosition(date, config.region.origin.lat, config.region.origin.lon);
     const dir = sunDirection(pos), st = skyState(pos.elevation);
@@ -305,16 +306,20 @@ async function start() {
     // hora mágica, neblina da manhã nas baixadas e noite
     const sm = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
     const el = pos.elevation, morning = min >= 240 && min < 720;
-    const mist = $('#t-mist').checked && morning ? (1 - sm(4, 19, el)) * sm(-8, -2, el) : 0;
+    const mist = ($('#t-mist').checked || demoMist) && morning ? (1 - sm(4, 19, el)) * sm(-8, -2, el) : 0;
     terrain.setAtmosphere({ gold: st.gold, mist, night: st.night });
     vectors.setNight(st.night);
-    vectors.setWaterLight(new THREE.Color('#9fd0f5').lerp(st.horizon, 0.55), (0.35 + 0.75 * st.gold) * (1 - 0.8 * st.night));
-    if (st.night > 0) setTimeout(() => ensureLights().catch((e) => { lightsP = null; console.warn('luzes', e); }), 0);
-    lightUI.out.textContent = `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+    waterTint.set('#9fd0f5').lerp(st.horizon, 0.55);
+    vectors.setWaterLight(waterTint, (0.35 + 0.75 * st.gold) * (1 - 0.8 * st.night));
+    if (st.night > 0 && !lightsP) setTimeout(() => ensureLights().catch((e) => { lightsP = null; console.warn('luzes', e); }), 0);
+    const m = Math.floor(min);
+    lightUI.out.textContent = `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
     lightUI.sun.textContent = pos.elevation > 0 ? `Sol a ${nf(pos.elevation)}° de altura, a ${compassName(pos.azimuth)}` : pos.elevation > -6 ? 'Crepúsculo' : 'Noite';
-    store.set('timeMin', String(min));
+    if (save) store.set('timeMin', String(m));
+    return { el, night: st.night };
   }
-  lightUI.time.addEventListener('input', applySun);
+  const waterTint = new THREE.Color();
+  lightUI.time.addEventListener('input', () => applySun());
   // atalhos de hora: a régua anda suave até a hora pedida (o céu e a luz acompanham)
   let timeAnim = null;
   function goToMinute(target) {
@@ -975,12 +980,20 @@ async function start() {
   }
 
   // demonstração da propriedade (~30 s): os painéis saem, a câmera gira em volta e as legendas contam os dados
-  let demoSplit = false;
+  let demoSplit = false, demoTime = null;
   const demo = new PropertyDemo({
     terrain, carLayer, drop, nf, fmtLen, years: YEARS, loadYear, blobOf, muni: hist,
     access: { route: (x) => roads.route(x), layer: accessLayer }, agro, fade: crossfade,
     // vigor: a cena do pasto usa o mapa das águas (a estação escolhida volta no fim, em setSurface)
     vigor: { ensure: () => loadVigor('aguas'), of: (x) => carLayer.vigorOf(x) },
+    // relógio: o dia passa durante a demonstração (a hora da pessoa volta no fim)
+    clock: {
+      set: (m) => { const mm = ((m % 1440) + 1440) % 1440; lightUI.time.value = String(Math.round(mm / 5) * 5); return applySun({ min: mm, save: false }); },
+      times: () => ({ dawn: sunMinute(240, 600, (e) => e > 2), gold: sunMinute(720, 1200, (e) => e < 6), sunset: sunMinute(720, 1260, (e) => e < -0.5) }),
+      prepare: () => ensureLights().catch(() => null),   // as luzes da noite ficam prontas antes de o relógio andar
+      mist: (on) => { demoMist = on; },
+    },
+    town: [config.region.origin.lat, config.region.origin.lon],
     onFrame: (pts) => { stopOrbit(); fitLatLon(pts, 1.15); },
     // tomadas da câmera por cena, em volta da propriedade: aberta, de cima, rasante, perto, longe
     onShot: (x, kind) => {
@@ -989,8 +1002,10 @@ async function start() {
       const S = { open: [1.15, 0.55, 1], top: [0.55, 1.6, 0.5], low: [0.85, 0.2, 0.8], close: [0.8, 0.4, 0.7], wide: [1.7, 0.75, 0.6] }[kind] ?? [1, 0.55, 1];
       startOrbit(c, r * S[0], 'Demonstração', { hRatio: S[1], speed: S[2], dur: 2.2 });
     },
-    el: { box: $('#demo'), cap: $('#demo-cap'), step: $('#demo-step'), title: $('#demo-title'), text: $('#demo-text'), extra: $('#demo-extra'), note: $('#demo-note'), prog: $('#demo-prog'), badge: $('#year-badge') },
+    el: { box: $('#demo'), cap: $('#demo-cap'), step: $('#demo-step'), title: $('#demo-title'), text: $('#demo-text'), extra: $('#demo-extra'), note: $('#demo-note'), prog: $('#demo-prog'), badge: $('#year-badge'), clock: $('#demo-clock') },
     onStart: (x) => {
+      cancelAnimationFrame(timeAnim);
+      demoTime = parseInt(lightUI.time.value, 10);
       setTool(null); stopPlay(); tmTicket++; drop.stop(); follow = false; setWater(null); setRoute(null);
       demoSplit = splitOn; if (splitOn) setSplit(false);
       carTip.hidden = true; carLayer.setHover(null);
@@ -1002,6 +1017,7 @@ async function start() {
     },
     onStop: (x, ended) => {
       stopOrbit();
+      if (demoTime != null) { const m = demoTime; demoTime = null; goToMinute(m); }   // a hora da pessoa volta, suave
       document.body.classList.remove('demo');
       layout();
       terrain.setStyle({ contours: style.contours, interval: style.interval });

@@ -38,7 +38,10 @@ src/cellterrain.js    terreno em 22×20 células (~2 km), LOD 72/36/18/9, saias,
 src/car.js            propriedades do CAR: cores por critério, ficha, busca por código, histórico (car_hist.json)
 src/water.js          gota de chuva: segue fdir.png (D8) e anima com LineMaterial tracejado
 src/profile.js        perfil do terreno entre dois toques
-src/demo.js           demonstração da propriedade (~30 s, 6 cenas com legenda, câmera girando; restaura a vista ao fim)
+src/demo.js           demonstração da propriedade (~75 s, até 12 cenas com legenda e câmera girando; restaura a vista ao
+                      fim). O dia passa durante ela (`clock` vindo de main.js; `tod` = hora no fim de cada cena):
+                      lusco-fusco com neblina na abertura → manhã nos anos → meio-dia na água → tarde → hora mágica no
+                      acesso → "Anoitece" com as luzes e o cartão "Até amanhã"; a hora da pessoa volta no fim
 src/propwater.js      "água da propriedade": área que drena para ela (D8 de trás para frente), córregos e nascentes dela
 src/sheet.js          folha A4 em PNG (vista 3D + números da ficha + avisos) para salvar/imprimir
 src/access.js         acesso pela estrada: menor caminho no OSM até o asfalto (surface marcado ou trunk/primary) e até

@@ -21,6 +21,14 @@ export class PropertyDemo {
     if (!x?.f.s) return;
     const run = this.run = { x, t: 0, k: -1, ready: false, stall: false, tex: new Map(), cap: '' };
     this.onStart(x);
+    // o dia passa durante a demonstração: começa no lusco-fusco do amanhecer (neblina nas baixadas) e termina de noite
+    run.T = this.clock?.times() ?? null;
+    if (run.T) {
+      this.fade?.();
+      this.clock.mist(true);
+      run.tod0 = run.T.dawn - 20;
+      this.#setClock(run.tod0);
+    }
     // abertura: o tamanho da propriedade grande no centro; a legenda entra depois (ver update)
     const intro = document.getElementById('demo-intro');
     document.getElementById('demo-intro-k').textContent = 'Andrelândia Rural · demonstração';
@@ -35,12 +43,15 @@ export class PropertyDemo {
     // total, ficam no cache) chegam durante a primeira cena — se faltar algum, a cena dos anos espera
     this.years.forEach((_, i) => this.blobOf(i));
     const got = await Promise.all([...[0, 1, 2, 3, 4, 5].map((i) => this.blobOf(i)), this.drop.load(), this.carLayer.loadHist(), this.agro?.load().catch(() => null),
-      this.vigor?.ensure().catch(() => null)]);
+      this.vigor?.ensure().catch(() => null), this.clock?.prepare()]);
     if (this.run !== run) return;
-    run.vig = !!got.at(-1);   // mapa de vigor carregado: entra a cena do pasto
+    run.vig = !!got.at(-2);   // mapa de vigor carregado: entra a cena do pasto
     await Promise.all([this.#want(0), this.#want(1)]);
     if (this.run !== run) return;
     run.scenes = this.#scenes(x);
+    // horas sempre para a frente (cenas que faltam não fazem o relógio voltar)
+    let last = run.tod0 ?? 0;
+    for (const s of run.scenes) if (s.tod != null) { s.tod = Math.max(s.tod, last + 5); last = s.tod; }
     run.total = run.scenes.reduce((a, s) => a + s.d, 0);
     run.ready = true;
   }
@@ -51,6 +62,7 @@ export class PropertyDemo {
     this.run = null;
     this.el.box.hidden = true; this.el.badge.hidden = true;
     const intro = document.getElementById('demo-intro'); intro.classList.remove('is-on'); intro.hidden = true;
+    this.clock?.mist(false);
     this.drop.stop(); this.carLayer.hidePeak(); this.access?.layer.hide();
     const c = this.carLayer;
     this.terrain.setCarState({ on: c.on, fill: c.fill ? 0.3 : 0, overlap: c.overlap, app: c.app });
@@ -71,8 +83,19 @@ export class PropertyDemo {
     if (k >= run.scenes.length) { this.stop({ ended: true }); return; }
     const sc = run.scenes[k];
     if (k !== run.k) { run.k = k; this.el.step.textContent = `${k + 1} de ${run.scenes.length} · ${sc.label}`; sc.enter(); }
+    if (run.T && sc.tod != null) {   // a hora anda suave da cena anterior até a desta
+      const prev = k === 0 ? run.tod0 : run.scenes[k - 1].tod ?? run.tod0, u = Math.min(1, t / sc.d);
+      this.#setClock(prev + (sc.tod - prev) * u * u * (3 - 2 * u));
+    }
     sc.update?.(t);
     this.el.prog.style.width = `${Math.min(100, (100 * run.t) / run.total).toFixed(1)}%`;
+  }
+
+  // hora da cena + relógio na legenda (☀ de dia, ☾ de noite)
+  #setClock(min) {
+    const r = this.clock.set(min), m = Math.floor(((min % 1440) + 1440) % 1440);
+    const txt = `${r?.el > -3 ? '☀' : '☾'} ${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+    if (this.el.clock && txt !== this.run.clockTxt) { this.run.clockTxt = txt; this.el.clock.textContent = txt; }
   }
 
   // legenda: só refaz quando o texto muda; anima a entrada, a não ser nas trocas rápidas (quiet)
@@ -111,11 +134,14 @@ export class PropertyDemo {
     };
     const pct = (v) => `${nf(v)}%`;
     const scenes = [];
+    // hora no fim de cada cena (minutos do dia): amanhecer → manhã nos anos → meio-dia na água → tarde →
+    // hora mágica no acesso → noite no fim. Sem relógio (D nulo), a luz fica como a pessoa deixou.
+    const D = this.run.T, hr = (v) => (D ? v : null);
 
     // 1. a propriedade
     const size = CRITERIA.tamanho.buckets[CRITERIA.tamanho.of(f)]?.[0].split(' (')[0] ?? '';
     const kind = size === 'Minifúndio' ? 'Minifúndio' : size ? `Propriedade ${size.toLowerCase()}` : 'Propriedade';
-    scenes.push({ d: 5, label: 'A propriedade', enter: () => {
+    scenes.push({ d: 5, label: 'A propriedade', tod: hr(D?.dawn + 15), enter: () => {
       view();   // durante a abertura a câmera segue alta e longe
       this.#caption(`${nf(f.ha, f.ha < 10 ? 1 : 0)} hectares`, `${kind} · ${nf(f.mf, f.mf < 1 ? 2 : 1)} ${f.mf < 2 ? 'módulo fiscal' : 'módulos fiscais'} · ${f.mun}`,
         s.a / f.ha < 0.9 ? `Os números a seguir valem para a parte dentro do mapa (${nf(s.a)} ha).` : '');
@@ -133,7 +159,7 @@ export class PropertyDemo {
       const gi = (n) => groups.indexOf(n);
       const metodo = gi('Campo nativo') >= 0 && gi('Pastagem') >= 0 && a[gi('Campo nativo')] - z[gi('Campo nativo')] >= 10 && z[gi('Pastagem')] - a[gi('Pastagem')] >= 10;
       const n = Y.length - 1, A = 1.5, B = A + n * 0.32;
-      scenes.push({ d: B + 1.5, label: 'A terra de 1985 a 2025', enter: () => {
+      scenes.push({ d: B + 1.5, label: 'A terra de 1985 a 2025', tod: hr(D?.dawn + 150), enter: () => {
         view({ surface: 'landuse', badge: true, shot: 'top' });
         this.#caption(`Em ${Y[0]}`, top85.map(([g, p]) => `${pct(p)} ${g.toLowerCase()}`).join(' · '));
       }, update: (t) => {
@@ -160,7 +186,7 @@ export class PropertyDemo {
     const V = this.run.vig ? this.vigor.of(x) : null;
     if (V && V.ha >= 1 && V.wet != null) {
       const LV = ['fraco', 'abaixo da média', 'acima da média', 'forte'];
-      scenes.push({ d: 4.5, label: 'O pasto', enter: () => {
+      scenes.push({ d: 4.5, label: 'O pasto', tod: hr(9 * 60 + 30), enter: () => {
         view({ surface: 'vigor', shot: 'top' });
         this.#caption(V.lv != null ? `Pasto ${LV[V.lv]} nas águas` : 'O verde do pasto nas águas',
           `${nf(V.ha, V.ha < 10 ? 1 : 0)} ha de pasto · NDVI ${nf(V.wet / 100, 2)} nas águas${V.dry != null ? ` e ${nf(V.dry / 100, 2)} na seca` : ''} · ${V.weak ?? 0}% dele fraco`,
@@ -169,7 +195,7 @@ export class PropertyDemo {
     }
 
     // 4. o relevo: curvas de nível e o ponto mais alto
-    scenes.push({ d: 4, label: 'O relevo', enter: () => {
+    scenes.push({ d: 4, label: 'O relevo', tod: hr(10 * 60 + 30), enter: () => {
       view({ contours: true, peak: true, shot: 'low' });
       this.#caption(`De ${nf(s.z[0])} a ${nf(s.z[2])} m de altitude`, `Declividade média de ${nf(s.sl)}°, relevo ${relevoOf(s.sl)}` + (s.rd >= 0.05 ? ` · ${nf(s.rd, 1)} km de estradas e caminhos` : ''),
         'O marcador branco mostra o ponto mais alto.');
@@ -177,7 +203,7 @@ export class PropertyDemo {
 
     // 4. a água: uma gota sai do ponto mais alto; APP estimada no mapa
     const [aha, anat] = s.app;
-    scenes.push({ d: 4.5, label: 'A água', enter: () => {
+    scenes.push({ d: 4.5, label: 'A água', tod: hr(12 * 60), enter: () => {
       view({ app: true, peak: true, shot: 'close' });
       const p = this.drop.trace(s.zp[0], s.zp[1]);
       const lim = Math.min(4000, Math.max(1200, (p.channelDist ?? 0) + 800));
@@ -193,7 +219,7 @@ export class PropertyDemo {
     if (s.sol) {
       const ref = this.muni?.sol?.[0], v = s.sol[0];
       const cmp = !ref ? '' : v > ref * 1.03 ? ' · mais que a média do município' : v < ref * 0.97 ? ' · menos que a média do município' : ' · na média do município';
-      scenes.push({ d: 3.5, label: 'Sol no inverno', enter: () => {
+      scenes.push({ d: 3.5, label: 'Sol no inverno', tod: hr(13 * 60), enter: () => {
         view({ surface: 'sol-inverno', shot: 'open' });
         this.#caption(`${nf(v, 1)} kWh/m² de sol por dia no inverno`, `${nf(s.sol[2], 1)} h de sol em 21 de junho${cmp}`, 'Céu limpo, com a sombra dos morros: amarelo recebe mais, roxo recebe menos.');
       } });
@@ -202,7 +228,7 @@ export class PropertyDemo {
     // 6. geada
     if (s.gea != null) {
       const g = s.gea;
-      scenes.push({ d: 3.5, label: 'Geada', enter: () => {
+      scenes.push({ d: 3.5, label: 'Geada', tod: hr(14 * 60), enter: () => {
         view({ surface: 'geada', shot: 'wide' });
         this.#caption(`${nf(g)}% da área em baixada fria`, g >= 30 ? 'Muita área onde a geada pega primeiro' : g >= 15 ? 'Parte da área onde a geada pega primeiro' : g >= 5 ? 'Pouca área onde a geada pega primeiro' : 'Quase nada em baixada fria',
           'Em branco-azulado, onde o ar frio para nas noites sem vento. Mapa ilustrativo.');
@@ -212,21 +238,21 @@ export class PropertyDemo {
     // 7–9. clima, solo e quando plantar (se os arquivos carregaram)
     if (this.agro?.clima) {
       const { climate: cl, soil: so } = this.agro.of(x), at = agroText(cl, so, nf);
-      scenes.push({ d: 5.5, label: 'O clima', enter: () => {
+      scenes.push({ d: 5.5, label: 'O clima', tod: hr(15 * 60), enter: () => {
         view({ shot: 'low' });
         this.#caption(at.rain[0].toUpperCase() + at.rain.slice(1), `${at.dry[0].toUpperCase() + at.dry.slice(1)} · ${at.temp}`,
           `Médias de 1991 a 2020 (reanálise ERA5), temperatura ajustada à altitude dela (${nf(cl.elev)} m). Barras: chuva · linhas: máxima e mínima.`,
           { extra: climateChart(cl, { w: 420, h: 88 }) });
       } });
       if (so) {
-        scenes.push({ d: 4.5, label: 'O solo', enter: () => {
+        scenes.push({ d: 4.5, label: 'O solo', tod: hr(15 * 60 + 45), enter: () => {
           view({ shot: 'close' });
           this.#caption(at.soil, at.soilNums, 'SoilGrids 250 m, de 0 a 30 cm: estimativa global, não substitui análise de solo.');
         } });
         const zs = FEATURED.map((n) => this.agro.zarcFor(n, so)).filter(Boolean).slice(0, 4);
         if (zs.length) {
           const rows = zs.map((z) => `<div class="zarc-row"><span class="zarc-name">${z.crop}</span>${zarcStrip(z.risk, { w: 300, h: 10 })}<span class="zarc-best">${bestWindow(z.risk) ?? 'não indicado'}</span></div>`).join('');
-          scenes.push({ d: 6.5, label: 'Quando plantar', enter: () => {
+          scenes.push({ d: 6.5, label: 'Quando plantar', tod: hr(D?.gold - 25), enter: () => {
             view({ shot: 'top' });
             this.#caption('Quando plantar com menos risco', `ZARC do Ministério da Agricultura, sem irrigação, solo ${so.tipoName}`,
               'Verde: risco de 20% · âmbar: 30% · laranja: 40% · em branco: não indicado. Tipo de solo estimado pela argila.',
@@ -240,13 +266,35 @@ export class PropertyDemo {
     const r = this.access?.route(x);
     if (r) {
       const t = accessText(r, nf), pts = [...f.rings.flat(), ...[r.city, r.asphalt].filter(Boolean).flatMap((p) => [...p.lines.dirt, ...p.lines.paved].flat())];
-      scenes.push({ d: 5.5, label: 'O acesso', enter: () => {
+      scenes.push({ d: 5.5, label: 'O acesso', tod: hr(D?.sunset + 5), enter: () => {
         view();
         this.access.layer.show(r); this.access.layer.setOpacity(0);
         this.onFrame(pts);
         this.#caption(t.city, [t.asphalt, t.dirt].filter(Boolean).join(' · '),
           `${t.gap ? `${t.gap} ` : ''}Âmbar: estrada de terra · cinza-claro: asfalto. Pelas estradas do OpenStreetMap; aproximado.`);
       }, update: (tt) => this.access.layer.setOpacity(Math.min(1, tt / 0.8)) });
+    }
+
+    // fim: anoitece — as luzes da cidade e dos povoados acendem e entra o "até amanhã"
+    if (D) {
+      scenes.push({ d: 7, label: 'Anoitece', tod: D.sunset + 85, enter: () => {
+        // depois do acesso a câmera fica onde está (o caminho até a cidade); sem ele, enquadra a propriedade e a cidade
+        const keep = !!r;
+        if (keep) { this.drop.stop(); this.carLayer.hidePeak(); this.access.layer.setOpacity(0.5); }
+        else { view(); if (this.town) this.onFrame([...f.rings.flat(), this.town]); }
+        this.#caption('Anoitece', `${nf(f.ha, f.ha < 10 ? 1 : 0)} hectares em ${f.mun}, do amanhecer à noite`,
+          'As luzes da cidade e dos povoados acendem (mancha urbana do MapBiomas e ruas do OpenStreetMap).');
+      }, update: (tt) => {
+        if (tt > 3.6 && !this.run.endCard) {   // cartão final por cima da paisagem noturna
+          this.run.endCard = true;
+          const intro = document.getElementById('demo-intro');
+          document.getElementById('demo-intro-k').textContent = 'Andrelândia Rural';
+          document.getElementById('demo-intro-t').textContent = 'Até amanhã';
+          document.getElementById('demo-intro-s').textContent = 'a terra, a água e o sol da sua propriedade num lugar só';
+          this.el.box.hidden = true;
+          intro.hidden = false; requestAnimationFrame(() => intro.classList.add('is-on'));
+        }
+      } });
     }
     return scenes;
   }

@@ -432,6 +432,8 @@
   /* ===== demonstração ===== */
   #demo { transform: translateX(-50%); bottom: calc(24px + env(safe-area-inset-bottom, 0px)); width: min(580px, calc(100vw - 32px)); box-sizing: border-box; padding: 14px 40px 0 18px; overflow: hidden; z-index: 4; }
   .demo-cap { display: grid; gap: 3px; padding-bottom: 14px; }
+  .demo-clock { position: absolute; top: 12px; right: 42px; font: 500 12px/1 var(--f-data); color: var(--ink-soft); padding: 4px 8px; border-radius: 999px; background: color-mix(in srgb, var(--ink) 7%, transparent); font-variant-numeric: tabular-nums; }
+  .demo-clock:empty { display: none; }
   #demo-title { margin: 0; font: 700 24px/1.1 var(--f-display); letter-spacing: .02em; text-wrap: balance; }
   #demo-text { margin: 0; font: 13px/1.45 var(--f-data); color: var(--contour); }
   #demo-note { margin: 0; }
@@ -822,6 +824,7 @@
 <div id="demo-intro" aria-hidden="true" hidden><span class="eyebrow" id="demo-intro-k"></span><strong id="demo-intro-t"></strong><span id="demo-intro-s"></span></div>
 <section id="demo" class="sheet map-c" hidden aria-labelledby="demo-title">
   <button type="button" class="card-close" id="demo-stop" aria-label="Parar a demonstração">×</button>
+  <span id="demo-clock" class="demo-clock" aria-hidden="true"></span>
   <div id="demo-cap" class="demo-cap" aria-live="polite">
     <span class="eyebrow" id="demo-step"></span>
     <h2 id="demo-title"></h2>
