@@ -4,3 +4,4 @@ node_modules/
 shot*.png
 _site/
 .claude/settings.local.json
+_tmp2m/

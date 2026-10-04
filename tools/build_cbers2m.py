@@ -53,7 +53,7 @@ def main():
     ap.add_argument('--out', default='data/muni/img/town')
     ap.add_argument('--gain', type=float, default=1.0, help='multiplica o ganho automático')
     ap.add_argument('--tag', default='')
-    ap.add_argument('--mode', default='detalhe', choices=['detalhe', 'puro'], help='detalhe: cor atual + detalhe dos 2 m · puro: 2 m inteira, cor casada')
+    ap.add_argument('--mode', default='puro', choices=['detalhe', 'puro'], help='detalhe: cor atual + detalhe dos 2 m · puro: 2 m inteira, cor casada')
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     os.environ.setdefault('GDAL_DISABLE_READDIR_ON_OPEN', 'EMPTY_DIR')
@@ -81,12 +81,18 @@ def main():
             cur = np.percentile(np.abs(L2[valid] - gaussian_filter(L2, 3)[valid]), 90) if valid.any() else 1
             gain = a.gain * ref / max(cur, 1e-3)
             if a.mode == 'puro':
-                # a imagem de 2 m inteira, com média e contraste de cada cor casados com o bloco atual (por célula)
+                # a imagem de 2 m inteira: contraste de cada cor casado com o bloco atual, e a cor em escala maior
+                # que ~50 m (sigma de 25 px) trocada pela do bloco — assim a borda da célula tem a mesma cor dos
+                # vizinhos de 4 m (sem degrau) e da imagem de 2 m fica a textura e o detalhe
                 out = hi.copy()
                 for k in range(3):
                     s, b = hi[..., k][valid], base[..., k][valid]
                     out[..., k] = (hi[..., k] - s.mean()) / max(s.std(), 1e-3) * b.std() + b.mean()
-                out = np.where(valid[..., None], out, base)
+                for k in range(3):
+                    out[..., k] += gaussian_filter(base[..., k], 25) - gaussian_filter(out[..., k], 25)
+                # onde a cena não cobre, o bloco de 4 m, com transição suave de ~60 m
+                fv = np.clip((gaussian_filter(valid.astype(np.float32), 15) - 0.5) * 2 + 0.5, 0, 1) * valid
+                out = out * fv[..., None] + base * (1 - fv[..., None])
                 out = np.clip(out, 0, 255).astype(np.uint8)
             else:
                 low = np.stack([gaussian_filter(base[..., k], 0.8) for k in range(3)], -1)
