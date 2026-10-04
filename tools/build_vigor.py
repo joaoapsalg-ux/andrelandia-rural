@@ -39,8 +39,10 @@ STAC = 'https://earth-search.aws.element84.com/v1/search'
 SEASONS = {'aguas': ('01-01', '04-30', 70), 'seca': ('07-01', '09-30', 50)}
 PASTO = 15
 
+# sem GDAL_HTTP_MULTIRANGE: o S3 não aceita vários trechos num pedido e devolve o arquivo inteiro (~150 MB por banda)
 os.environ.update(GDAL_DISABLE_READDIR_ON_OPEN='EMPTY_DIR', CPL_VSIL_CURL_ALLOWED_EXTENSIONS='.tif', AWS_NO_SIGN_REQUEST='YES',
-                  GDAL_HTTP_MULTIRANGE='YES', GDAL_HTTP_MERGE_CONSECUTIVE_RANGES='YES', VSI_CACHE='TRUE', GDAL_CACHEMAX='512')
+                  GDAL_HTTP_MERGE_CONSECUTIVE_RANGES='YES', VSI_CACHE='TRUE', GDAL_CACHEMAX='512')
+STATS = {'off': 0, 'nooff': 0}
 
 
 def log(*a): print(f'[{time.time() - T0:6.1f}s]', *a, flush=True)
@@ -66,11 +68,6 @@ def search(year, season, max_items):
     return out[:max_items]
 
 
-def scale_offset(asset):
-    rb = (asset.get('raster:bands') or [{}])[0]
-    return rb.get('scale', 0.0001), rb.get('offset', 0.0)
-
-
 def read_grid(href, transform, w, h, resampling, overview=None):
     kw = {'overview_level': overview} if overview is not None else {}
     with rasterio.open(href, **kw) as src, WarpedVRT(src, crs='EPSG:4326', transform=transform, width=w, height=h,
@@ -86,10 +83,14 @@ def ndvi_of(it, transform, w, h, coarse):
     red = read_grid(A['red']['href'], transform, w, h, rs, ov).astype(np.float32)
     nir = read_grid(A['nir']['href'], transform, w, h, rs, ov).astype(np.float32)
     scl = read_grid(A['scl']['href'], transform, w, h, Resampling.nearest)
-    (sr, orr), (sn, on) = scale_offset(A['red']), scale_offset(A['nir'])
-    if it['properties'].get('earthsearch:boa_offset_applied'): orr = on = 0.0
     ok = (red > 0) & (nir > 0) & np.isin(scl, [4, 5])
-    R, N = np.maximum(red * sr + orr, 0), np.maximum(nir * sn + on, 0)
+    # deslocamento de +1000 nos números (cenas processadas a partir de 2022): decidido pelos dados, não pelo catálogo
+    # (que marca "boa_offset_applied" e offset −0,1 ao mesmo tempo). Mata fechada reflete 2–4% no vermelho:
+    # número ~200–400 sem o deslocamento, ~1200–1400 com ele
+    veg = (scl == 4) & (red > 0)
+    off = 1000.0 if veg.sum() > 2000 and np.percentile(red[veg], 1) > 800 else 0.0
+    STATS['off' if off else 'nooff'] += 1
+    R, N = np.maximum((red - off) * 1e-4, 0), np.maximum((nir - off) * 1e-4, 0)
     with np.errstate(invalid='ignore', divide='ignore'):
         v = (N - R) / (N + R)
     v[~ok | (N + R < 0.02)] = np.nan
@@ -111,7 +112,8 @@ def composite(year, season, transform, w, h, coarse, max_items):
     cnt = np.isfinite(stack).sum(0)
     dates = sorted({it['properties']['datetime'][:10] for it in items})
     log(f'{year} {season}: {len(items)} cenas, {len(dates)} datas, {np.isfinite(out).mean() * 100:.1f}% com dado, '
-        f'mediana de {np.median(cnt):.0f} observações por pixel, NDVI mediano {np.nanmedian(out):.2f}')
+        f'mediana de {np.median(cnt):.0f} observações por pixel, NDVI mediano {np.nanmedian(out):.2f} '
+        f'(cenas com/sem deslocamento até agora: {STATS["off"]}/{STATS["nooff"]})')
     return out, dates
 
 

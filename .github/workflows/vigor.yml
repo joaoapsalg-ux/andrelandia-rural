@@ -1,5 +1,6 @@
 # Vigor da pastagem: NDVI da Sentinel-2 (Earth Search, AWS) nas águas e na seca, mapa de 2026 e tendência por
 # propriedade desde 2019 (tools/build_vigor.py). Grava em data/muni/layers/ e publica o site.
+# teste = sim: poucas cenas de 2 anos, não grava nem publica (devolve o resultado como artefato para conferir).
 name: Vigor da pastagem (gera e publica)
 
 on:
@@ -8,6 +9,11 @@ on:
       years:
         description: 'Anos (o último vira o mapa de 10 m)'
         default: '2019-2026'
+      teste:
+        description: 'Teste rápido (não publica)'
+        type: choice
+        options: ['não', 'sim']
+        default: 'não'
 
 permissions:
   contents: write
@@ -16,7 +22,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -26,8 +32,22 @@ jobs:
       - name: Calcular o vigor
         env:
           YEARS: ${{ inputs.years }}
-        run: python tools/build_vigor.py --years "$YEARS"
+          TESTE: ${{ inputs.teste }}
+        run: |
+          if [ "$TESTE" = "sim" ]; then
+            python tools/build_vigor.py --years 2025-2026 --max-items 3 --max-items-old 3
+          else
+            python tools/build_vigor.py --years "$YEARS"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: ${{ inputs.teste == 'sim' }}
+        with:
+          name: vigor-teste
+          path: |
+            data/muni/layers/vigor*.webp
+            data/muni/layers/vigor.json
       - name: Gravar no repositório
+        if: ${{ inputs.teste != 'sim' }}
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
@@ -36,6 +56,7 @@ jobs:
           git pull --rebase
           git push
       - name: Publicar o site
+        if: ${{ inputs.teste != 'sim' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run pages.yml -R "$GITHUB_REPOSITORY"
