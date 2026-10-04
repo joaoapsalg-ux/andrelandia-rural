@@ -1,0 +1,480 @@
+<title>Andrelândia 3D</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  /* Layout: mapa em tela cheia; margens da "carta" flutuam sobre ele — título/lugares à esquerda, camadas à direita, leitura de coordenadas e rosa dos ventos embaixo. */
+  :root {
+    --sky: #d6ddd9;
+    --panel: #f5f6f1;
+    --panel-line: #c9cfc4;
+    --ink: #1d2621;
+    --ink-soft: #56625a;
+    --contour: #7a4a26;
+    --hydro: #1e5d86;
+    --relief-paper: #e8e4d6;
+    --skirt: #8b7b64;
+    --relief-dim: 1;
+    --label-bg: rgba(245, 246, 241, 0.92);
+    --shadow: 0 1px 2px rgba(29, 38, 33, 0.12), 0 6px 18px rgba(29, 38, 33, 0.10);
+    --f-display: 'Barlow Condensed', 'Arial Narrow', sans-serif;
+    --f-body: 'Barlow', system-ui, sans-serif;
+    --f-data: 'IBM Plex Mono', ui-monospace, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --sky: #121916; --panel: #171e1b; --panel-line: #2e3833; --ink: #e2e7df; --ink-soft: #9aa69e;
+      --contour: #d39a6a; --hydro: #6db3df; --relief-paper: #8c887c; --skirt: #3b352c; --relief-dim: 0.78;
+      --label-bg: rgba(23, 30, 27, 0.9); --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 22px rgba(0,0,0,.35);
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --sky: #121916; --panel: #171e1b; --panel-line: #2e3833; --ink: #e2e7df; --ink-soft: #9aa69e;
+    --contour: #d39a6a; --hydro: #6db3df; --relief-paper: #8c887c; --skirt: #3b352c; --relief-dim: 0.78;
+    --label-bg: rgba(23, 30, 27, 0.9); --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 22px rgba(0,0,0,.35);
+    color-scheme: dark;
+  }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--sky); color: var(--ink); font: 15px/1.45 var(--f-body); overflow: hidden; }
+  #stage { position: fixed; inset: 0; }
+  #stage canvas { display: block; width: 100%; height: 100%; touch-action: none; outline: none; }
+  #labels { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+
+  .sheet { position: fixed; background: var(--panel); border: 1px solid var(--panel-line); box-shadow: var(--shadow); border-radius: 3px; }
+  .eyebrow { font: 600 11px/1 var(--f-display); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-soft); }
+
+  /* bloco de título, à maneira da margem de uma carta topográfica */
+  #title { top: calc(16px + env(safe-area-inset-top, 0px)); left: 16px; width: min(280px, calc(100vw - 32px)); padding: 14px 16px 12px; display: grid; gap: 10px; max-height: calc(100% - 200px); overflow: auto; }
+  #title h1 { margin: 0; font: 700 34px/0.95 var(--f-display); letter-spacing: .02em; text-transform: uppercase; text-wrap: balance; }
+  #title h1 small { display: block; font: 600 13px/1.2 var(--f-display); letter-spacing: .1em; color: var(--ink-soft); margin-top: 5px; }
+  .legend { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; align-items: center; font-size: 13px; color: var(--ink-soft); }
+  .swatch-contour { width: 26px; height: 10px; background: linear-gradient(var(--contour), var(--contour)) 0 2px / 100% 1px no-repeat, linear-gradient(var(--contour), var(--contour)) 0 7px / 100% 2px no-repeat; }
+  .swatch-hyps { width: 26px; height: 10px; border-radius: 1px; background: linear-gradient(90deg, #78995f, #b3ba7d, #cdae78, #b3845c, #ede3d1); }
+  #places { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+  #places button { all: unset; cursor: pointer; display: block; width: 100%; box-sizing: border-box; padding: 5px 8px; border-radius: 2px; font: 500 14px/1.25 var(--f-body); }
+  #places button:hover { background: color-mix(in srgb, var(--hydro) 12%, transparent); }
+  #places button:focus-visible { outline: 2px solid var(--hydro); outline-offset: 1px; }
+
+  /* camadas */
+  #layers { top: calc(16px + env(safe-area-inset-top, 0px)); right: 16px; width: 288px; padding: 0; }
+  #layers summary { cursor: pointer; list-style: none; padding: 12px 14px; display: flex; justify-content: space-between; align-items: center; }
+  #layers summary::-webkit-details-marker { display: none; }
+  #layers summary::after { content: '▾'; color: var(--ink-soft); font-size: 12px; }
+  #layers[open] summary::after { content: '▴'; }
+  #layers summary:focus-visible { outline: 2px solid var(--hydro); outline-offset: -2px; }
+  .layer-body { padding: 0 14px 14px; display: grid; gap: 12px; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; }
+  .row input[type=checkbox] { accent-color: var(--hydro); width: 16px; height: 16px; }
+  .slider { display: grid; gap: 6px; font-size: 14px; }
+  .slider output { font: 500 13px var(--f-data); color: var(--hydro); }
+  .slider input { width: 100%; accent-color: var(--hydro); }
+  .btns { display: flex; gap: 8px; }
+  .btn { flex: 1; font: 600 13px/1 var(--f-display); letter-spacing: .08em; text-transform: uppercase; padding: 9px 8px; border: 1px solid var(--panel-line); background: transparent; color: var(--ink); border-radius: 2px; cursor: pointer; }
+  .btn:hover { border-color: var(--hydro); color: var(--hydro); }
+  .btn:focus-visible { outline: 2px solid var(--hydro); outline-offset: 1px; }
+  .sources { border-top: 1px solid var(--panel-line); padding-top: 10px; display: grid; gap: 4px; font-size: 12px; color: var(--ink-soft); }
+  .sources p { margin: 0; }
+  .sources code { font: 11px/1.4 var(--f-data); }
+
+
+  /* seletor de modelos */
+  fieldset.models { border: 0; margin: 0; padding: 0; display: grid; gap: 4px; min-width: 0; }
+  fieldset.models legend { padding: 0; margin-bottom: 6px; }
+  #models { display: grid; gap: 2px; }
+  .model { display: grid; grid-template-columns: auto 1fr auto; grid-template-areas: "r n k" "r m k"; column-gap: 8px; align-items: center; padding: 6px 8px; border-radius: 2px; cursor: pointer; border: 1px solid transparent; }
+  .model:hover { background: color-mix(in srgb, var(--hydro) 8%, transparent); }
+  .model:has(input:checked) { border-color: var(--hydro); background: color-mix(in srgb, var(--hydro) 10%, transparent); }
+  .model input { grid-area: r; accent-color: var(--hydro); margin: 0; }
+  .model input:focus-visible { outline: 2px solid var(--hydro); outline-offset: 2px; }
+  .model__name { grid-area: n; font: 600 15px/1.15 var(--f-display); letter-spacing: .02em; }
+  .model__meta { grid-area: m; font: 12px/1.4 var(--f-data); color: var(--ink-soft); display: flex; gap: 6px; align-items: center; }
+  .model__key { grid-area: k; font: 11px var(--f-data); color: var(--ink-soft); border: 1px solid var(--panel-line); border-radius: 2px; padding: 0 5px; }
+  .badge { text-decoration: none; font: 600 10px/1 var(--f-display); letter-spacing: .1em; padding: 3px 4px 2px; border-radius: 2px; border: 1px solid currentColor; }
+  .badge--mdt { color: var(--contour); }
+  .badge--mds { color: var(--hydro); }
+  .model-note { margin: 4px 0 0; font-size: 12.5px; line-height: 1.4; color: var(--ink-soft); }
+  .model-state { margin: 0; font-size: 12.5px; color: var(--contour); min-height: 0; }
+  .model-state:empty { display: none; }
+  .chip { justify-self: start; font: 12px var(--f-data); color: var(--hydro); border: 1px solid var(--panel-line); border-radius: 2px; padding: 2px 6px; }
+  #layers { max-height: calc(100% - 140px); overflow: auto; }
+
+
+  /* camadas: superfície e sobreposições */
+  .seg, .checks { border: 0; margin: 0; padding: 0; min-width: 0; display: grid; gap: 6px; }
+  .seg legend, .checks legend { padding: 0; margin-bottom: 6px; }
+  .seg__opts { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--panel-line); border-radius: 2px; overflow: hidden; }
+  .seg__opts input { position: absolute; opacity: 0; pointer-events: none; }
+  .seg__opts label { text-align: center; padding: 7px 4px; font: 600 13px/1 var(--f-display); letter-spacing: .06em; text-transform: uppercase; cursor: pointer; color: var(--ink-soft); }
+  .seg__opts label + input + label { border-left: 1px solid var(--panel-line); }
+  .seg__opts input:checked + label { background: var(--hydro); color: var(--panel); }
+  .seg__opts input:focus-visible + label { outline: 2px solid var(--hydro); outline-offset: -3px; }
+  .checks .row > span { display: inline-flex; align-items: center; gap: 8px; }
+  .sw { display: inline-block; width: 22px; height: 0; border-top: 3px solid; border-radius: 2px; vertical-align: middle; }
+  .sw--trunk { border-color: #f3b23a; border-top-width: 4px; }
+  .sw--road { border-color: #d9cfb6; }
+  .sw--rail { border-top: 3px dashed #5b2a1c; }
+  .sw--river { border-color: #2f8fe0; }
+  .sw--drain { border-color: #6cc4ff; border-top-width: 2px; }
+  .sw--bldg { width: 12px; height: 10px; border: 1px solid var(--ink-soft); background: #f1ece2; }
+  .sw-inline { display: inline-block; }
+  .legend-sub { display: contents; }
+  .img-list { display: grid; gap: 2px; margin-top: 2px; }
+  .img-opt { justify-content: flex-start; cursor: pointer; font-size: 14px; }
+  .img-opt > span { display: inline-flex; align-items: center; gap: 8px; }
+  .img-opt input { accent-color: var(--hydro); margin: 0; }
+  .img-opt small { font: 12px var(--f-data); color: var(--ink-soft); white-space: nowrap; }
+  .img-opt > span { white-space: nowrap; }
+  .sources b { font-weight: 600; color: var(--ink); }
+
+
+  /* legenda recolhível e modo "só mapa" */
+  #legend-box summary { cursor: pointer; list-style: none; display: flex; justify-content: space-between; align-items: center; margin-bottom: 0; }
+  #legend-box summary::-webkit-details-marker { display: none; }
+  #legend-box summary::after { content: '▾'; color: var(--ink-soft); font-size: 12px; }
+  #legend-box:not([open]) summary::after { content: '▸'; }
+  #legend-box[open] summary { margin-bottom: 6px; }
+  #legend-box summary:focus-visible { outline: 2px solid var(--hydro); outline-offset: 2px; }
+  #ui-toggle { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; padding: 6px 8px; border: 1px solid var(--panel-line); border-radius: 2px; font: 600 12px/1 var(--f-display); letter-spacing: .08em; text-transform: uppercase; color: var(--ink); }
+  #ui-toggle:hover { border-color: var(--hydro); color: var(--hydro); }
+  #ui-toggle:focus-visible { outline: 2px solid var(--hydro); outline-offset: 2px; }
+  #ui-toggle svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+  #ui-toggle .eye-off { display: none; }
+  body.ui-hidden #ui-toggle .eye-off { display: inline; }
+  body.ui-hidden #title, body.ui-hidden #layers, body.ui-hidden #readout, body.ui-hidden #stream, body.ui-hidden #info { display: none !important; }
+  @media (max-width: 700px) { #ui-toggle-label { display: none; } }
+
+
+  /* uso do solo, copas e luz */
+  .seg__opts label { padding: 7px 2px; font-size: 12px; letter-spacing: .04em; white-space: nowrap; }
+  .seg__opts label:nth-of-type(n+4) { border-top: 1px solid var(--panel-line); }
+  .seg__opts label + input + label { border-left: 1px solid var(--panel-line); }
+  .seg__opts input#s-alt + label { border-left: 0; }
+  .lc { display: grid; gap: 6px; margin-top: 4px; }
+  .lc-years { display: flex; flex-wrap: wrap; gap: 4px; }
+  .lc-years input { position: absolute; opacity: 0; pointer-events: none; }
+  .lc-years label { font: 12px var(--f-data); padding: 3px 6px; border: 1px solid var(--panel-line); border-radius: 2px; cursor: pointer; display: inline-flex; gap: 3px; align-items: baseline; }
+  .lc-years label small { font-size: 9px; color: var(--ink-soft); }
+  .lc-years input:checked + label { background: var(--hydro); color: var(--panel); border-color: var(--hydro); }
+  .lc-years input:checked + label small { color: var(--panel); }
+  .lc-years input:focus-visible + label { outline: 2px solid var(--hydro); outline-offset: 1px; }
+  .lc-scroll { max-height: 220px; overflow: auto; }
+  .layer-body > * { min-width: 0; }
+  .lc-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .lc-table th:nth-child(2), .lc-table td:nth-child(2) { width: 3.2em; } .lc-table th:nth-child(3), .lc-table td:nth-child(3) { width: 3.4em; } .lc-table th:nth-child(4), .lc-table td:nth-child(4) { width: 4.6em; }
+  .lc-table td:first-child span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lc-table th { font: 600 10px/1.4 var(--f-display); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); text-align: right; padding: 2px 3px; }
+  .lc-table th:first-child, .lc-table td:first-child { text-align: left; }
+  .lc-table td { padding: 2px 3px; text-align: right; border-top: 1px solid color-mix(in srgb, var(--panel-line) 60%, transparent); }
+  .lc-table td:first-child { display: flex; gap: 6px; align-items: center; line-height: 1.2; min-width: 0; }
+  .lc-sw { flex: 0 0 auto; width: 10px; height: 10px; border-radius: 1px; outline: 1px solid color-mix(in srgb, var(--ink) 20%, transparent); }
+  .lc-d { font: 11px var(--f-data); color: var(--ink-soft); }
+  .lc-d.up { color: #b5532a; } .lc-d.down { color: var(--hydro); }
+  .chm { display: grid; gap: 4px; margin-top: 4px; }
+  .chm-bar { height: 10px; border-radius: 1px; background: linear-gradient(90deg, #dbd6c7 0 12%, #9ec773 12%, #2a6a35 70%, #12542a); }
+  .chm-scale { display: flex; justify-content: space-between; font: 11px var(--f-data); color: var(--ink-soft); }
+  .btn--small { flex: 0 0 auto; padding: 5px 8px; font-size: 11px; }
+  .light .row .model-note { margin: 0; }
+  small.dim { color: var(--ink-soft); font-size: 11px; }
+
+
+  /* rotas e imóveis */
+  .sw--strava { border-top: 3px solid #fc4c02; }
+  .sw--car { width: 12px; height: 10px; border: 1.5px solid #f97316; border-radius: 1px; }
+  .subpanel { display: grid; gap: 6px; border-top: 1px solid var(--panel-line); padding-top: 10px; min-width: 0; }
+  .sv-list { list-style: none; margin: 0; padding: 0; max-height: 220px; overflow: auto; display: grid; gap: 1px; }
+  .sv-list button { all: unset; box-sizing: border-box; width: 100%; cursor: pointer; display: flex; gap: 8px; align-items: center; padding: 5px 6px; border-radius: 2px; }
+  .sv-list button:hover { background: color-mix(in srgb, var(--hydro) 10%, transparent); }
+  .sv-list button:focus-visible { outline: 2px solid var(--hydro); outline-offset: -2px; }
+  .sv-dot { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; }
+  .sv-main { display: grid; min-width: 0; }
+  .sv-main b { font: 600 13px/1.2 var(--f-body); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sv-main small { font: 11px/1.3 var(--f-data); color: var(--ink-soft); }
+  .car-row { font-size: 12px; font-variant-numeric: tabular-nums; }
+  .car-row > span:first-child { display: inline-flex; gap: 6px; align-items: center; }
+
+
+  /* imóveis do CAR: painel, dica do mouse, rótulos e ficha */
+  .car-crit { display: grid; gap: 3px; font-size: 12px; color: var(--ink-soft); }
+  .car-crit select { font: 13px var(--f-body); color: var(--ink); background: var(--panel); border: 1px solid var(--panel-line); border-radius: 2px; padding: 5px 6px; min-width: 0; }
+  .car-crit select:focus-visible { outline: 2px solid var(--hydro); outline-offset: 1px; }
+  .sw--ov { width: 12px; height: 10px; background: repeating-linear-gradient(135deg, #cc1f6b 0 1.5px, transparent 1.5px 4px); outline: 1px solid color-mix(in srgb, var(--ink) 20%, transparent); }
+  .sw--app { width: 12px; height: 10px; background: linear-gradient(90deg, #1c80c4 50%, #e0381f 50%); border-radius: 1px; }
+  .car-app-key { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--ink-soft); }
+  .car-app-key > span { display: inline-flex; gap: 5px; align-items: center; }
+  .car-tip { position: fixed; left: 0; top: 0; pointer-events: none; z-index: 5; background: var(--label-bg); border: 1px solid var(--panel-line); border-radius: 2px; padding: 4px 8px; font: 12px/1.4 var(--f-data); color: var(--ink); box-shadow: var(--shadow); white-space: nowrap; }
+  .car-tip .lc-sw { display: inline-block; vertical-align: -1px; }
+  .car-lbl { position: absolute; left: 0; top: 0; margin: -9px 0 0 -24px; min-width: 48px; text-align: center; font: 500 11px/1 var(--f-data); color: #1d2621; background: rgba(255, 252, 240, 0.82); border-radius: 2px; padding: 3px 4px; pointer-events: none; white-space: nowrap; will-change: transform; }
+  #car-card { left: 50%; transform: translateX(-50%); bottom: calc(92px + env(safe-area-inset-bottom, 0px)); width: min(660px, calc(100vw - 32px)); max-height: min(62vh, calc(100% - 200px)); overflow: auto; box-sizing: border-box; padding: 14px 18px 12px; }
+  #car-card-close { all: unset; position: absolute; top: 8px; right: 10px; cursor: pointer; font-size: 20px; color: var(--ink-soft); padding: 2px 6px; }
+  #car-card-close:focus-visible { outline: 2px solid var(--hydro); }
+  .cc-head { display: grid; gap: 2px; padding-right: 24px; }
+  .cc-head h2 { margin: 0; font: 700 24px/1.05 var(--f-display); letter-spacing: .02em; }
+  .cc-head h2 small { font: 600 15px var(--f-display); color: var(--ink-soft); letter-spacing: .04em; margin-left: 4px; }
+  .cc-meta { margin: 0; font: 12.5px var(--f-data); color: var(--contour); display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .cc-chip { display: inline-flex; align-items: center; gap: 5px; font: 600 11px/1 var(--f-body); color: var(--ink); padding: 3px 7px 3px 6px; border-radius: 10px; background: color-mix(in srgb, var(--c) 22%, transparent); border: 1px solid color-mix(in srgb, var(--c) 70%, transparent); }
+  .cc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px 20px; margin-top: 12px; }
+  .cc-grid section { display: grid; gap: 5px; align-content: start; min-width: 0; }
+  .cc-grid h3 { margin: 0; font: 600 11px/1.3 var(--f-display); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-soft); border-bottom: 1px solid var(--panel-line); padding-bottom: 3px; }
+  .cc-bar { display: flex; height: 12px; border-radius: 2px; overflow: hidden; outline: 1px solid color-mix(in srgb, var(--ink) 15%, transparent); }
+  .cc-bar span { min-width: 1px; }
+  .cc-bar--app { height: 8px; }
+  .cc-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; font-size: 12.5px; }
+  .cc-list li { display: grid; grid-template-columns: auto 1fr auto; gap: 6px; align-items: center; }
+  .cc-list li span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cc-list b, .cc-kv b { font: 500 12.5px var(--f-data); }
+  .cc-kv { margin: 0; font-size: 13px; line-height: 1.45; }
+  .cc-delta { font: 11.5px var(--f-data); color: var(--ink-soft); white-space: nowrap; }
+  .cc-delta.down { color: #b5532a; } .cc-delta.up { color: #1f7a4f; }
+  .cc-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: 0; }
+  .cc-note { margin: 2px 0 0; font-size: 11.5px; line-height: 1.4; color: var(--ink-soft); }
+  .cc-routes { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
+  .cc-routes button { all: unset; cursor: pointer; font-size: 12.5px; color: var(--hydro); text-decoration: underline; text-underline-offset: 2px; }
+  .cc-routes button:focus-visible { outline: 2px solid var(--hydro); }
+  .cc-grid .btn--small { justify-self: start; }
+  .cc-warn { margin: 8px 0 0; font-size: 12.5px; padding: 6px 8px; border-left: 3px solid #d97706; background: color-mix(in srgb, #d97706 10%, transparent); }
+  .cc-warn--ov { border-left-color: #cc1f6b; background: color-mix(in srgb, #cc1f6b 9%, transparent); margin: 0; }
+  .cc-foot { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--panel-line); display: grid; gap: 4px; font-size: 12px; color: var(--ink-soft); }
+  .cc-foot p { margin: 0; }
+  .cc-cod { font: 11px var(--f-data); word-break: break-all; }
+  body.ui-hidden #car-card, body.ui-hidden .car-tip { display: none !important; }
+  @media (max-width: 700px) {
+    #car-card { bottom: calc(150px + env(safe-area-inset-bottom, 0px)); max-height: 46vh; padding: 12px 14px 10px; }
+    .cc-head h2 { font-size: 21px; }
+  }
+
+  /* leitura de coordenadas */
+  #readout { left: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); padding: 10px 14px; display: grid; grid-template-columns: auto auto; gap: 2px 14px; font: 13px/1.5 var(--f-data); font-variant-numeric: tabular-nums; }
+  #readout dt { color: var(--ink-soft); font: 600 11px/1.9 var(--f-display); letter-spacing: .12em; text-transform: uppercase; }
+  #readout dd { margin: 0; }
+  #readout[data-empty="true"] dd { color: var(--ink-soft); }
+  #readout .alt { color: var(--contour); font-weight: 500; }
+
+  /* rosa dos ventos + escala */
+  #nav { right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); padding: 10px 12px; display: flex; align-items: center; gap: 14px; }
+  #compass { all: unset; cursor: pointer; width: 44px; height: 44px; display: grid; place-items: center; border-radius: 50%; border: 1px solid var(--panel-line); }
+  #compass:focus-visible { outline: 2px solid var(--hydro); outline-offset: 2px; }
+  #compass-rose { width: 34px; height: 34px; transition: transform .05s linear; }
+  #scale { display: grid; gap: 4px; min-width: 70px; }
+  #scale-bar { height: 5px; border: 1.5px solid var(--ink); border-top: none; box-sizing: border-box; }
+  #scale-label { font: 12px var(--f-data); color: var(--ink-soft); }
+
+  /* rótulos dos lugares */
+  .poi { all: unset; position: absolute; left: 0; top: 0; pointer-events: auto; cursor: pointer; display: flex; align-items: center; gap: 5px; padding: 3px 7px 3px 5px; margin: -26px 0 0 -6px; background: var(--label-bg); border: 1px solid var(--panel-line); border-radius: 2px; font: 600 13px/1.1 var(--f-display); letter-spacing: .03em; white-space: nowrap; color: var(--ink); will-change: transform; }
+  .poi:hover, .poi:focus-visible { border-color: var(--hydro); outline: none; }
+  .poi__glyph { color: var(--contour); font-size: 12px; }
+  .poi[data-kind="cidade"] .poi__name { text-transform: uppercase; letter-spacing: .1em; }
+  .poi--aprox { border-style: dashed; }
+  .poi--out { opacity: .75; font-style: italic; }
+  .poi[data-kind="localidade"], .poi[data-kind="povoado"] { font-size: 12px; font-weight: 500; padding: 2px 6px 2px 4px; }
+  .poi[data-kind="vila"] .poi__name { text-transform: uppercase; letter-spacing: .06em; font-size: 12px; }
+  .poi small { font: 11px var(--f-data); color: var(--ink-soft); }
+  .sw--bound { border-top: 3px dashed #d94f8a; }
+  .sw--clip { width: 12px; height: 10px; border: 0; border-radius: 1px; background: linear-gradient(135deg, var(--skirt) 0 50%, transparent 50%); outline: 1px dashed #d94f8a; }
+  .clip-row { font-weight: 500; }
+  #stream { position: fixed; left: 50%; transform: translateX(-50%); top: calc(16px + env(safe-area-inset-top, 0px)); font: 12px var(--f-data); color: var(--ink-soft); background: var(--label-bg); border: 1px solid var(--panel-line); border-radius: 2px; padding: 3px 8px; pointer-events: none; white-space: nowrap; }
+  @media (max-width: 700px) { #stream { display: none; } }
+
+  #info { left: 50%; transform: translateX(-50%); bottom: calc(92px + env(safe-area-inset-bottom, 0px)); padding: 12px 40px 12px 16px; display: grid; gap: 2px; max-width: calc(100vw - 32px); box-sizing: border-box; }
+  #info-name { margin: 0; font: 700 20px/1.1 var(--f-display); letter-spacing: .03em; }
+  #info-meta { font: 13px var(--f-data); color: var(--contour); }
+  #info-src { font-size: 12px; color: var(--ink-soft); }
+  #info-close { all: unset; position: absolute; top: 8px; right: 10px; cursor: pointer; font-size: 18px; color: var(--ink-soft); padding: 2px 6px; }
+  #info-close:focus-visible { outline: 2px solid var(--hydro); }
+
+  #status { position: fixed; inset: 0; display: grid; place-items: center; font: 600 15px var(--f-display); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-soft); padding: 16px; text-align: center; }
+  #status[data-error="true"] { color: var(--contour); text-transform: none; letter-spacing: 0; font: 15px var(--f-body); }
+
+  .hint { font-size: 12px; color: var(--ink-soft); }
+
+  @media (max-width: 700px) {
+    #title { width: calc(100vw - 32px - 0px); max-height: 40vh; padding: 10px 12px; gap: 8px; }
+    #title h1 { font-size: 26px; }
+    #title .legend, #title .hint { display: none; }
+    #places { grid-auto-flow: column; grid-auto-columns: max-content; overflow-x: auto; }
+    #layers { top: auto; right: 16px; bottom: calc(84px + env(safe-area-inset-bottom, 0px)); width: min(288px, calc(100vw - 32px)); max-height: 55vh; }
+    .model__key { display: none; }
+    #readout { grid-template-columns: auto; font-size: 12px; padding: 8px 10px; }
+    #readout dt:not(.keep), #readout dd:not(.keep) { display: none; }
+    #info { bottom: calc(150px + env(safe-area-inset-bottom, 0px)); }
+  }
+  @media (prefers-reduced-motion: reduce) { #compass-rose { transition: none; } }
+</style>
+
+<div id="stage" aria-label="Modelo 3D do relevo de Andrelândia"></div>
+<div id="labels"></div>
+<div id="status" role="status">Carregando relevo…</div>
+<div id="stream" aria-live="off"></div>
+
+<section id="title" class="sheet" aria-labelledby="t-h1">
+  <h1 id="t-h1">Andrelândia <small>Município · relevo 3D · v0.8</small></h1>
+  <span id="model-chip" class="chip" aria-live="polite"></span>
+  <details id="legend-box" open>
+  <summary><span class="eyebrow">Legenda</span></summary>
+  <div class="legend">
+    <span class="sw sw--trunk" aria-hidden="true"></span><span>Rodovias BR-494 · LMG-866</span>
+    <span class="sw sw--road" aria-hidden="true"></span><span>Ruas e estradas</span>
+    <span class="sw sw--bound" aria-hidden="true"></span><span>Limite municipal · 1.002 km²</span>
+    <span class="sw sw--rail" aria-hidden="true"></span><span>Ferrovia</span>
+    <span class="sw sw--river" aria-hidden="true"></span><span>Rios Aiuruoca e Turvo</span>
+    <span class="sw sw--drain" aria-hidden="true"></span><span>Córregos (calculados)</span>
+    <span class="swatch-contour" aria-hidden="true"></span><span>Curvas de nível: 20 m · mestras 100 m</span>
+    <div id="legend-hyps" class="legend-sub" hidden><span class="swatch-hyps" aria-hidden="true"></span><span id="legend-alt">Altitude</span></div>
+  </div>
+  </details>
+  <div>
+    <div class="eyebrow" style="margin-bottom:4px">Lugares</div>
+    <ul id="places"></ul>
+  </div>
+  <p class="hint" style="margin:0">Arraste para mover · botão direito ou dois dedos para girar e inclinar · roda para aproximar · setas do teclado · teclas 1–2 trocam o relevo · H oculta os painéis.</p>
+</section>
+
+<details id="layers" class="sheet" open>
+  <summary><span class="eyebrow">Camadas</span></summary>
+  <div class="layer-body">
+    <fieldset class="models">
+      <legend class="eyebrow">Modelo de relevo</legend>
+      <div id="models"></div>
+      <p id="model-note" class="model-note"></p>
+      <p id="model-state" class="model-state" role="status"></p>
+    </fieldset>
+    <fieldset class="seg" id="surface">
+      <legend class="eyebrow">Superfície</legend>
+      <div class="seg__opts">
+        <input type="radio" name="surface" id="s-sat" value="satellite" checked><label for="s-sat">Satélite</label>
+        <input type="radio" name="surface" id="s-lc" value="landuse"><label for="s-lc">Uso do solo</label>
+        <input type="radio" name="surface" id="s-chm" value="canopy"><label for="s-chm">Copas</label>
+        <input type="radio" name="surface" id="s-alt" value="altitude"><label for="s-alt">Altitude</label>
+        <input type="radio" name="surface" id="s-paper" value="paper"><label for="s-paper">Neutro</label>
+      </div>
+      <div id="imagery" class="img-list" role="radiogroup" aria-label="Imagem de satélite"></div>
+      <p id="img-state" class="model-state" role="status"></p>
+      <div id="lc-panel" class="lc" hidden>
+        <div id="lc-years" class="lc-years" role="radiogroup" aria-label="Ano do mapa de uso do solo"></div>
+        <p id="lc-state" class="model-state" role="status"></p>
+        <div class="lc-scroll">
+          <table class="lc-table">
+            <thead><tr><th>Classe</th><th>km²</th><th>%</th><th id="lc-head-d"></th></tr></thead>
+            <tbody id="lc-table"></tbody>
+          </table>
+        </div>
+        <p id="lc-note" class="model-note"></p>
+      </div>
+      <div id="chm-panel" class="chm" hidden>
+        <div class="chm-bar" aria-hidden="true"></div>
+        <div class="chm-scale"><span>sem copa</span><span>5 m</span><span>12 m</span><span>22 m+</span></div>
+        <p class="model-note">Altura das copas = superfície do Copernicus − terreno do ANADEM. Matas altas aparecem nas grotas e encostas; eucaliptais formam manchas retas e uniformes.</p>
+      </div>
+    </fieldset>
+    <fieldset class="checks light">
+      <legend class="eyebrow">Luz</legend>
+      <label class="slider" for="time">
+        <span class="row">Hora do dia <output id="time-out" for="time">15:30</output></span>
+        <input type="range" id="time" min="300" max="1170" step="5" value="930">
+      </label>
+      <div class="row"><span id="sun-out" class="model-note"></span><button type="button" class="btn btn--small" id="time-now">Agora</button></div>
+      <label class="row" for="t-shadows"><span>Sombras do relevo</span> <input type="checkbox" id="t-shadows"></label>
+      <label class="row" for="t-trees"><span>Árvores 3D <small class="dim">(com ANADEM, de perto)</small></span> <input type="checkbox" id="t-trees"></label>
+    </fieldset>
+    <fieldset class="checks">
+      <legend class="eyebrow">Sobre o relevo</legend>
+      <label class="row" for="t-roads"><span><span class="sw sw--road" aria-hidden="true"></span> Vias e ferrovia</span> <input type="checkbox" id="t-roads" checked></label>
+      <label class="row" for="t-water"><span><span class="sw sw--river" aria-hidden="true"></span> Rios</span> <input type="checkbox" id="t-water" checked></label>
+      <label class="row" for="t-drainage"><span><span class="sw sw--drain" aria-hidden="true"></span> Córregos calculados</span> <input type="checkbox" id="t-drainage" checked></label>
+      <label class="row" for="t-buildings"><span><span class="sw sw--bldg" aria-hidden="true"></span> Edificações (OSM)</span> <input type="checkbox" id="t-buildings" checked></label>
+      <label class="row" for="t-contours"><span><span class="swatch-contour sw-inline" aria-hidden="true"></span> Curvas de nível</span> <input type="checkbox" id="t-contours"></label>
+      <label class="row clip-row" for="t-clip"><span><span class="sw sw--clip" aria-hidden="true"></span> Recortar no limite do município</span> <input type="checkbox" id="t-clip"></label>
+      <label class="row" for="t-boundary"><span><span class="sw sw--bound" aria-hidden="true"></span> Limite municipal</span> <input type="checkbox" id="t-boundary" checked></label>
+      <label class="row" for="t-labels"><span>Nomes dos lugares</span> <input type="checkbox" id="t-labels" checked></label>
+      <label class="row" for="t-strava"><span><span class="sw sw--strava" aria-hidden="true"></span> Minhas rotas (Strava)</span> <input type="checkbox" id="t-strava"></label>
+      <label class="row" for="t-car"><span><span class="sw sw--car" aria-hidden="true"></span> Imóveis rurais (CAR)</span> <input type="checkbox" id="t-car"></label>
+    </fieldset>
+    <section id="strava-panel" class="subpanel" aria-label="Rotas do Strava" hidden>
+      <span class="eyebrow">Minhas rotas · Strava</span>
+      <p id="strava-sum" class="model-note"></p>
+      <ul id="strava-list" class="sv-list"></ul>
+    </section>
+    <section id="car-panel" class="subpanel" aria-label="Imóveis rurais" hidden>
+      <span class="eyebrow">Imóveis rurais · CAR</span>
+      <p id="car-state" class="model-state" role="status"></p>
+      <p id="car-sum" class="model-note"></p>
+      <label class="car-crit" for="car-crit"><span>Colorir por</span> <select id="car-crit"></select></label>
+      <div id="car-legend"></div>
+      <label class="row" for="car-fill"><span>Preencher os imóveis</span> <input type="checkbox" id="car-fill"></label>
+      <label class="row" for="car-ov"><span><span class="sw sw--ov" aria-hidden="true"></span> Hachurar sobreposições</span> <input type="checkbox" id="car-ov"></label>
+      <label class="row" for="car-app"><span><span class="sw sw--app" aria-hidden="true"></span> APP estimada</span> <input type="checkbox" id="car-app"></label>
+      <div id="car-app-key" class="car-app-key" hidden>
+        <span><span class="lc-sw" style="background:#1c80c4"></span> com vegetação nativa</span>
+        <span><span class="lc-sw" style="background:#e0381f"></span> com uso agropecuário</span>
+      </div>
+      <p id="car-app-sum" class="model-note"></p>
+      <p class="model-note">Passe o mouse ou clique num imóvel para ver a ficha. Contornos autodeclarados, sem dados pessoais.</p>
+    </section>
+    <label class="slider" for="exag">
+      <span class="row">Exagero vertical <output id="exag-out" for="exag">1,5×</output></span>
+      <input type="range" id="exag" min="1" max="4" step="0.1" value="1.5">
+    </label>
+    <div class="btns">
+      <button type="button" class="btn" id="v-muni">Município</button>
+      <button type="button" class="btn" id="v-reset">Cidade</button>
+      <button type="button" class="btn" id="v-top">Planta</button>
+    </div>
+    <div class="sources">
+      <span class="eyebrow">Fontes</span>
+      <p><b>Relevo:</b> <span id="src-dem"></span></p>
+      <p><b>Imagem:</b> <span id="src-img"></span></p>
+      <p><b>Vetores:</b> <span id="src-vec"></span></p>
+      <p><b>Uso do solo:</b> <span id="src-lc"></span></p>
+      <p><b>Imóveis rurais:</b> SICAR — Cadastro Ambiental Rural, consulta pública (camada sicar_imoveis_mg), 03/10/2026.</p>
+      <p><b>Rotas:</b> suas atividades no Strava (trajeto simplificado).</p>
+      <p><b>Copas:</b> Copernicus GLO-30 − ANADEM, mediana 3×3, mínimo 2,5 m.</p>
+      <p id="src-area"></p>
+      <p>Coordenadas UTM em SIRGAS 2000.</p>
+    </div>
+  </div>
+</details>
+
+<dl id="readout" class="sheet" data-empty="true" aria-live="off">
+  <dt class="keep">Alt.</dt><dd id="r-alt" class="alt keep">—</dd>
+  <dt>Lat.</dt><dd id="r-lat">aponte o terreno</dd>
+  <dt>Long.</dt><dd id="r-lon">—</dd>
+  <dt class="keep">UTM</dt><dd id="r-utm" class="keep">—</dd>
+  <dt>Mun.</dt><dd id="r-mun">—</dd>
+</dl>
+
+<div id="nav" class="sheet">
+  <button type="button" id="compass" title="Girar para o norte" aria-label="Girar a vista para o norte">
+    <svg id="compass-rose" viewBox="0 0 40 40" aria-hidden="true">
+      <polygon points="20,3 25,20 20,17 15,20" fill="var(--contour)"/>
+      <polygon points="20,37 25,20 20,23 15,20" fill="var(--ink-soft)"/>
+      <text x="20" y="13.5" text-anchor="middle" font-family="Barlow Condensed, sans-serif" font-weight="700" font-size="7" fill="var(--panel)">N</text>
+    </svg>
+  </button>
+  <div id="scale"><div id="scale-bar" style="width:60px"></div><span id="scale-label">—</span></div>
+  <button type="button" id="ui-toggle" aria-pressed="false" title="Ocultar painéis (tecla H)">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path class="eye-open" d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle class="eye-open" cx="12" cy="12" r="3"/><path class="eye-off" d="M3 3l18 18"/></svg>
+    <span id="ui-toggle-label">Ocultar painéis</span>
+  </button>
+</div>
+
+<div id="info" class="sheet" hidden>
+  <button type="button" id="info-close" aria-label="Fechar">×</button>
+  <h2 id="info-name"></h2>
+  <span id="info-meta"></span>
+  <span id="info-src"></span>
+</div>
+
+<div id="car-tip" class="car-tip" hidden></div>
+<section id="car-card" class="sheet" hidden aria-labelledby="cc-title">
+  <button type="button" id="car-card-close" aria-label="Fechar ficha">×</button>
+  <div id="car-card-body"></div>
+</section>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+} }
+</script>
+<script type="module" src="src/main.js"></script>

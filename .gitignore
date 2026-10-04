@@ -1,0 +1,6 @@
+__pycache__/
+node_modules/
+*.png.tmp
+shot*.png
+_site/
+.claude/settings.local.json

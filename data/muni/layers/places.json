@@ -1,0 +1,542 @@
+[
+{
+"id": "n246670597",
+"name": "São Vicente de Minas",
+"kind": "vila",
+"lat": -21.703333,
+"lon": -44.443889,
+"ele": null,
+"inside": false,
+"src": "osm"
+},
+{
+"id": "n246671221",
+"name": "Santana do Garambéu",
+"kind": "vila",
+"lat": -21.601389,
+"lon": -44.104167,
+"ele": null,
+"inside": false,
+"src": "osm"
+},
+{
+"id": "n246671232",
+"name": "Andrelândia",
+"kind": "cidade",
+"lat": -21.740156,
+"lon": -44.309064,
+"ele": null,
+"inside": true,
+"src": "osm"
+},
+{
+"id": "n246671235",
+"name": "Arantina",
+"kind": "vila",
+"lat": -21.911667,
+"lon": -44.255833,
+"ele": null,
+"inside": false,
+"src": "osm"
+},
+{
+"id": "n246672640",
+"name": "Serranos",
+"kind": "vila",
+"lat": -21.890277,
+"lon": -44.509444,
+"ele": null,
+"inside": false,
+"src": "osm"
+},
+{
+"id": "n416645397",
+"name": "Santo Antônio do Porto",
+"kind": "vila",
+"lat": -21.54553,
+"lon": -44.181222,
+"ele": null,
+"inside": false,
+"src": "osm"
+},
+{
+"id": "n416657197",
+"name": "Sousa",
+"kind": "povoado",
+"lat": -21.802199,
+"lon": -44.081035,
+"ele": null,
+"inside": false,
+"src": "osm"
+},
+{
+"id": "n4396899693",
+"name": "Porto Feliz",
+"kind": "povoado",
+"lat": -21.765643,
+"lon": -44.499761,
+"ele": null,
+"inside": false,
+"src": "osm"
+},
+{
+"id": "n4923014986",
+"name": "Dois Irmãos",
+"kind": "pico",
+"lat": -21.594275,
+"lon": -44.375668,
+"ele": null,
+"inside": false,
+"src": "osm"
+},
+{
+"id": "n4945058896",
+"name": "Varginha",
+"kind": "localidade",
+"lat": -21.714493,
+"lon": -44.27752,
+"ele": null,
+"inside": true,
+"src": "osm"
+},
+{
+"id": "n4945058897",
+"name": "Guandu",
+"kind": "localidade",
+"lat": -21.724022,
+"lon": -44.270268,
+"ele": null,
+"inside": true,
+"src": "osm"
+},
+{
+"id": "n4945058903",
+"name": "Tapanhaú",
+"kind": "localidade",
+"lat": -21.806165,
+"lon": -44.30872,
+"ele": null,
+"inside": true,
+"src": "osm"
+},
+{
+"id": "n4945059009",
+"name": "Barreiro",
+"kind": "localidade",
+"lat": -21.806803,
+"lon": -44.471111,
+"ele": null,
+"inside": false,
+"src": "osm"
+},
+{
+"id": "n4945059010",
+"name": "Frieza",
+"kind": "localidade",
+"lat": -21.832261,
+"lon": -44.491196,
+"ele": null,
+"inside": false,
+"src": "osm"
+},
+{
+"id": "n4945059011",
+"name": "Cachoeira",
+"kind": "localidade",
+"lat": -21.805807,
+"lon": -44.509306,
+"ele": null,
+"inside": false,
+"src": "osm"
+},
+{
+"id": "n4945072523",
+"name": "Porteira do Brejo",
+"kind": "localidade",
+"lat": -21.686342,
+"lon": -44.31417,
+"ele": null,
+"inside": true,
+"src": "osm"
+},
+{
+"id": "n4945072524",
+"name": "Morro Grande",
+"kind": "localidade",
+"lat": -21.687658,
+"lon": -44.360304,
+"ele": null,
+"inside": false,
+"src": "osm"
+},
+{
+"id": "n4945072525",
+"name": "Morro Grande",
+"kind": "localidade",
+"lat": -21.859945,
+"lon": -44.298034,
+"ele": null,
+"inside": true,
+"src": "osm"
+},
+{
+"id": "n4945072526",
+"name": "Córrego do Sítio",
+"kind": "localidade",
+"lat": -21.857755,
+"lon": -44.282069,
+"ele": null,
+"inside": true,
+"src": "osm"
+},
+{
+"id": "n4945072527",
+"name": "Ponte Grande",
+"kind": "povoado",
+"lat": -21.869743,
+"lon": -44.240956,
+"ele": null,
+"inside": true,
+"src": "osm"
+},
+{
+"id": "n4945072528",
+"name": "Esbarradinho",
+"kind": "localidade",
+"lat": -21.882567,
+"lon": -44.252844,
+"ele": null,
+"inside": true,
+"src": "osm"
+},
+{
+"id": "n4945072529",
+"name": "Córrego da Ponte Grande",
+"kind": "localidade",
+"lat": -21.872571,
+"lon": -44.259453,
+"ele": null,
+"inside": true,
+"src": "osm"
+},
+{
+"id": "n4945072530",
+"name": "Espraiado de Cima",
+"kind": "localidade",
+"lat": -21.853851,
+"lon": -44.213147,
+"ele": null,
+"inside": false,
+"src": "osm"
+},
+{
+"id": "n4945072531",
+"name": "Espraiado de Baixo",
+"kind": "localidade",
+"lat": -21.858193,
+"lon": -44.193449,
+"ele": null,
+"inside": false,
+"src": "osm"
+},
+{
+"id": "n4945072565",
+"name": "Mendiga",
+"kind": "localidade",
+"lat": -21.783492,
+"lon": -44.197054,
+"ele": null,
+"inside": true,
+"src": "osm"
+},
+{
+"id": "n5470966926",
+"name": "Capitães",
+"kind": "povoado",
+"lat": -21.7675,
+"lon": -44.074238,
+"ele": null,
+"inside": false,
+"src": "osm"
+},
+{
+"id": "n6656018932",
+"name": "Alto da Garça",
+"kind": "pico",
+"lat": -21.861419,
+"lon": -44.365432,
+"ele": 1347.0,
+"inside": false,
+"src": "osm"
+},
+{
+"id": "n6656018934",
+"name": "Turvo",
+"kind": "pico",
+"lat": -21.81768,
+"lon": -44.34391,
+"ele": 1489.0,
+"inside": true,
+"src": "osm"
+},
+{
+"id": "n6656018956",
+"name": "Safira",
+"kind": "localidade",
+"lat": -21.732354,
+"lon": -44.199221,
+"ele": null,
+"inside": true,
+"src": "osm"
+},
+{
+"id": "n6656019789",
+"name": "Redonda de Baixo",
+"kind": "localidade",
+"lat": -21.765558,
+"lon": -44.215164,
+"ele": null,
+"inside": true,
+"src": "osm"
+},
+{
+"id": "n6656019790",
+"name": "Valas",
+"kind": "localidade",
+"lat": -21.754159,
+"lon": -44.223404,
+"ele": null,
+"inside": true,
+"src": "osm"
+},
+{
+"id": "n6656019793",
+"name": "Mato Grosso",
+"kind": "povoado",
+"lat": -21.819831,
+"lon": -44.246922,
+"ele": null,
+"inside": true,
+"src": "osm"
+},
+{
+"id": "n6656019794",
+"name": "Capivari",
+"kind": "povoado",
+"lat": -21.833058,
+"lon": -44.219456,
+"ele": null,
+"inside": true,
+"src": "osm"
+},
+{
+"id": "n6656019795",
+"name": "Barreiro",
+"kind": "localidade",
+"lat": -21.849151,
+"lon": -44.24881,
+"ele": null,
+"inside": true,
+"src": "osm"
+},
+{
+"id": "n6656019796",
+"name": "Jacarandá",
+"kind": "localidade",
+"lat": -21.852019,
+"lon": -44.239969,
+"ele": null,
+"inside": true,
+"src": "osm"
+},
+{
+"id": "n6656019797",
+"name": "Espraiado de Baixo",
+"kind": "povoado",
+"lat": -21.870739,
+"lon": -44.229756,
+"ele": null,
+"inside": false,
+"src": "osm"
+},
+{
+"id": "n6656019805",
+"name": "Timbó",
+"kind": "localidade",
+"lat": -21.884916,
+"lon": -44.219692,
+"ele": null,
+"inside": false,
+"src": "osm"
+},
+{
+"id": "n6656019810",
+"name": "Serra da Natureza",
+"kind": "localidade",
+"lat": -21.782785,
+"lon": -44.246568,
+"ele": null,
+"inside": true,
+"src": "osm"
+},
+{
+"id": "n6656019811",
+"name": "Barro Preto",
+"kind": "povoado",
+"lat": -21.795307,
+"lon": -44.246342,
+"ele": null,
+"inside": true,
+"src": "osm"
+},
+{
+"id": "n6656019812",
+"name": "Redonda de Cima",
+"kind": "localidade",
+"lat": -21.777355,
+"lon": -44.216623,
+"ele": null,
+"inside": true,
+"src": "osm"
+},
+{
+"id": "n6656019813",
+"name": "Mendiga",
+"kind": "localidade",
+"lat": -21.790187,
+"lon": -44.215336,
+"ele": null,
+"inside": true,
+"src": "osm"
+},
+{
+"id": "n6656019814",
+"name": "Capivari",
+"kind": "localidade",
+"lat": -21.80238,
+"lon": -44.190531,
+"ele": null,
+"inside": true,
+"src": "osm"
+},
+{
+"id": "n6656019815",
+"name": "Cachoeira Funda",
+"kind": "localidade",
+"lat": -21.746904,
+"lon": -44.100409,
+"ele": null,
+"inside": true,
+"src": "osm"
+},
+{
+"id": "n6656019817",
+"name": "Caconde",
+"kind": "localidade",
+"lat": -21.77058,
+"lon": -44.103069,
+"ele": null,
+"inside": true,
+"src": "osm"
+},
+{
+"id": "n6656019831",
+"name": "Serra do Cadoz",
+"kind": "pico",
+"lat": -21.87733,
+"lon": -44.099057,
+"ele": 1635.0,
+"inside": false,
+"src": "osm"
+},
+{
+"id": "n6656019838",
+"name": "Dois Córregos",
+"kind": "povoado",
+"lat": -21.887474,
+"lon": -44.161049,
+"ele": null,
+"inside": false,
+"src": "osm"
+},
+{
+"id": "n6656019841",
+"name": "Alto da Capoeira Grande",
+"kind": "pico",
+"lat": -21.886868,
+"lon": -44.08998,
+"ele": 1695.0,
+"inside": false,
+"src": "osm"
+},
+{
+"id": "n6656019843",
+"name": "Serra do Governo",
+"kind": "pico",
+"lat": -21.915457,
+"lon": -44.149375,
+"ele": 1484.0,
+"inside": false,
+"src": "osm"
+},
+{
+"id": "n6656019854",
+"name": "Serra São Pedro",
+"kind": "pico",
+"lat": -21.927361,
+"lon": -44.128647,
+"ele": 1575.0,
+"inside": false,
+"src": "osm"
+},
+{
+"id": "n6656019860",
+"name": "Serra Capoeirão",
+"kind": "pico",
+"lat": -21.910321,
+"lon": -44.104529,
+"ele": 1523.0,
+"inside": false,
+"src": "osm"
+},
+{
+"id": "n6656019862",
+"name": "Serra do Cruz",
+"kind": "pico",
+"lat": -21.899889,
+"lon": -44.092255,
+"ele": 1593.0,
+"inside": false,
+"src": "osm"
+},
+{
+"id": "n9964462994",
+"name": "Ciganada Camping Rock",
+"kind": "atrativo",
+"lat": -21.931135,
+"lon": -44.187084,
+"ele": null,
+"inside": false,
+"src": "osm"
+},
+{
+"id": "n11928317401",
+"name": "Capoeira Grande",
+"kind": "povoado",
+"lat": -21.846457,
+"lon": -44.092985,
+"ele": null,
+"inside": false,
+"src": "osm"
+},
+{
+"id": "n13917224003",
+"name": "Mirante do Vale",
+"kind": "mirante",
+"lat": -21.676622,
+"lon": -44.292057,
+"ele": null,
+"inside": true,
+"src": "osm"
+}
+]

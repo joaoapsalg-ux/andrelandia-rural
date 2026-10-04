@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><title>Solo (SoilGrids) → solo.json</title>
+<style>body { font: 13px/1.5 ui-monospace, monospace; padding: 16px; background: #f5f6f1; color: #1d2621; }</style></head>
+<body>
+<h1>SoilGrids 2.0 → data/muni/layers/solo.json</h1>
+<pre id="log"></pre>
+<script type="module">
+// Lê os recortes do SoilGrids (WCS da ISRIC, EPSG:4326, 250 m) baixados para ANDRELANDIA_RAW (~/Downloads):
+//   andrelandia_soilgrids_{clay,sand,soc,phh2o}_{0-5cm,5-15cm,15-30cm}.tif e andrelandia_soilgrids_wrb.tif
+// (map=/map/<prop>.map, COVERAGEID=<prop>_<prof>_mean, SUBSET=long(-44.52,-44.05)&SUBSET=lat(-21.95,-21.52)).
+// Junta 0–30 cm (média pela espessura) e grava solo.json pelo POST /__save/ do tools/dev/serve.ps1.
+// Abrir com o servidor rodando: http://localhost:8000/tools/dev/build_solo.html
+import { fromArrayBuffer } from 'https://cdn.jsdelivr.net/npm/geotiff@2.1.3/+esm';
+const log = (s) => { document.getElementById('log').textContent += s + '\n'; };
+async function read(name) {
+  const r = await fetch('/__raw/' + name);
+  if (!r.ok) throw new Error('faltou ' + name);
+  const img = await (await fromArrayBuffer(await r.arrayBuffer())).getImage();
+  const [data] = await img.readRasters();
+  return { w: img.getWidth(), h: img.getHeight(), bbox: img.getBoundingBox(), data };
+}
+const DEPTHS = [['0-5cm', 5], ['5-15cm', 10], ['15-30cm', 15]];
+async function layer(p) {
+  const parts = await Promise.all(DEPTHS.map(([d]) => read(`andrelandia_soilgrids_${p}_${d}.tif`)));
+  const { w, h, bbox } = parts[0], out = new Float32Array(w * h);
+  for (let k = 0; k < w * h; k++) {
+    let s = 0, ws = 0;
+    parts.forEach((pt, i) => { const v = pt.data[k]; if (v > 0) { s += v * DEPTHS[i][1]; ws += DEPTHS[i][1]; } });
+    out[k] = ws ? s / ws : 0;
+  }
+  return { w, h, bbox, out };
+}
+const b64 = (u8) => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode(...u8.subarray(i, i + 0x8000)); return btoa(s); };
+try {
+  const [clay, sand, soc, ph] = await Promise.all(['clay', 'sand', 'soc', 'phh2o'].map(layer));
+  const wrb = await read('andrelandia_soilgrids_wrb.tif');
+  const { w, h, bbox } = clay;
+  log(`grade ${w}×${h}, bbox ${bbox.map((v) => v.toFixed(4)).join(', ')} · wrb ${wrb.w}×${wrb.h}`);
+  const enc = (L, f, max) => Uint8Array.from(L.out, (v) => (v > 0 ? Math.max(1, Math.min(max, Math.round(v * f))) : 0));
+  // a classe WRB vem noutra grade: amostra o pixel dela no centro de cada célula (vizinho mais próximo)
+  const wb = wrb.bbox, wrbU8 = new Uint8Array(w * h);
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+    const lon = bbox[0] + ((i + 0.5) / w) * (bbox[2] - bbox[0]), lat = bbox[3] - ((j + 0.5) / h) * (bbox[3] - bbox[1]);
+    const px = Math.floor(((lon - wb[0]) / (wb[2] - wb[0])) * wrb.w), py = Math.floor(((wb[3] - lat) / (wb[3] - wb[1])) * wrb.h);
+    const v = px >= 0 && py >= 0 && px < wrb.w && py < wrb.h ? wrb.data[py * wrb.w + px] : -1;
+    wrbU8[j * w + i] = v >= 0 && v < 255 ? v : 255;
+  }
+  const counts = {};
+  for (const v of wrbU8) counts[v] = (counts[v] ?? 0) + 1;
+  log('classes WRB (código: células): ' + JSON.stringify(counts));
+  const stat = (u8, f) => { const v = [...u8].filter((x) => x > 0); v.sort((a, b) => a - b); return `${v[0] * f}–${v.at(-1) * f} (mediana ${v[v.length >> 1] * f})`; };
+  const out = {
+    source: 'SoilGrids 2.0 (ISRIC, CC BY 4.0), 250 m, média de 0 a 30 cm; WRB: classe mais provável',
+    bbox, w, h,
+    units: { clay: '%', sand: '%', soc: 'g/kg', ph: 'pH × 10' },
+    clay: b64(enc(clay, 0.1, 100)), sand: b64(enc(sand, 0.1, 100)), soc: b64(enc(soc, 0.1, 250)), ph: b64(enc(ph, 1, 140)),
+    // códigos do SoilGrids (ordem alfabética das 30 classes WRB): 0 Acrisols, 6 Cambisols, 10 Ferralsols…
+    wrb: b64(wrbU8),
+  };
+  log(`argila ${stat(enc(clay, 0.1, 100), 1)} % · areia ${stat(enc(sand, 0.1, 100), 1)} % · carbono ${stat(enc(soc, 0.1, 250), 1)} g/kg · pH ${stat(enc(ph, 1, 140), 0.1)}`);
+  const r = await fetch('/__save/solo.json', { method: 'POST', body: JSON.stringify(out) });
+  log('gravado: ' + (await r.text()));
+  window.done = true;
+} catch (e) { log('ERRO ' + e.message); window.done = e.message; }
+</script>
+</body></html>

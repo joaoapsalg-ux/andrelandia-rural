@@ -1,0 +1,50 @@
+# Publica o app no GitHub Pages a cada push na main.
+# O index.html não tem <!doctype>/<head>/<body> (no claude.ai o Artifact acrescenta; no PC, o serve.ps1/serve.py):
+# aqui o mesmo esqueleto é acrescentado na montagem. Só vão para o site index.html, src/ e data/.
+name: Publicar no GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Montar o site
+        run: |
+          mkdir -p _site
+          {
+            printf '%s' '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">'
+            printf '%s' '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
+            printf '%s' '<meta name="description" content="Andrelândia (MG) em 3D para produtores rurais: propriedades do CAR, a terra de 1985 a 2025, água, sol, geada, clima, solo e época de plantio.">'
+            printf '%s' '<meta name="theme-color" content="#171e1b"></head><body>'
+            cat index.html
+            printf '%s' '</body></html>'
+          } > _site/index.html
+          cp -r src data _site/
+          touch _site/.nojekyll
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
