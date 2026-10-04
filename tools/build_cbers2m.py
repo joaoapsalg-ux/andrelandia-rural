@@ -115,6 +115,43 @@ def register(ref, img):
     return dy, dx
 
 
+def denoise(img, strength):
+    """tira o granulado do sensor preservando as bordas (non-local means no brilho) — antes de realçar"""
+    from skimage.restoration import denoise_nl_means, estimate_sigma
+    L = lum(img) / 255.0
+    sig = float(estimate_sigma(L))
+    D = denoise_nl_means(L, h=strength * sig, sigma=sig, patch_size=5, patch_distance=6, fast_mode=True)
+    return img + ((D - L) * 255.0)[..., None], sig * 255
+
+
+def s2_offset(bbox, crs):
+    """deslocamento (leste, norte) em metros que leva a CBERS para a posição da Sentinel-2 (boa precisão de posição).
+    Busca a cena Sentinel-2 L2A de jun–ago/2026 com menos nuvem no catálogo aberto da AWS (Element84)."""
+    import json, urllib.request
+    w, s, e, n = bbox
+    q = {'collections': ['sentinel-2-l2a'], 'bbox': [w, s, e, n], 'datetime': '2026-06-01T00:00:00Z/2026-08-31T23:59:59Z',
+         'query': {'eo:cloud_cover': {'lt': 10}}, 'limit': 20}
+    req = urllib.request.Request('https://earth-search.aws.element84.com/v1/search', data=json.dumps(q).encode(), headers={'Content-Type': 'application/json'})
+    items = json.load(urllib.request.urlopen(req, timeout=60))['features']
+    if not items: return 0.0, 0.0, 'sem cena Sentinel-2'
+    it = min(items, key=lambda f: f['properties'].get('eo:cloud_cover', 100))
+    href = it['assets']['red']['href']
+    with rasterio.open(href) as s2:
+        X, Y = transform('EPSG:4326', s2.crs, [w, e], [n, s])
+        win = from_bounds(min(X), min(Y), max(X), max(Y), s2.transform).round_offsets().round_lengths()
+        ref = s2.read(1, window=win).astype(np.float32)
+        b = rasterio.windows.bounds(win, s2.transform)
+    with rasterio.open(COG) as cb:   # a mesma área, na CBERS, reamostrada para a grade de 10 m da Sentinel-2
+        cw = from_bounds(*b, cb.transform)
+        img = cb.read(1, window=cw, out_shape=ref.shape, resampling=rasterio.enums.Resampling.average).astype(np.float32)
+    dy, dx = register(ref, img)
+    de, dn = -dx * 10.0, dy * 10.0
+    info = f'Sentinel-2 {it["id"]} ({it["properties"].get("eo:cloud_cover", 0):.0f}% nuvem): CBERS deslocada {de:+.1f} m leste, {dn:+.1f} m norte'
+    if abs(de) > 40 or abs(dn) > 40:   # grande demais para ser só erro de posição: não confia
+        return 0.0, 0.0, info + ' (ignorado)'
+    return de, dn, info
+
+
 def deconvolve(img, sigma, k):
     """desfaz em parte o borrão do sensor (Wiener, borrão gaussiano de raio sigma px), só no brilho"""
     L = lum(img)
@@ -206,12 +243,19 @@ def run_stack(a, sk):
     """várias datas empilhadas: alinha cada uma à primeira, iguala as cores e tira a mediana pixel a pixel"""
     keys = a.dates.split(',')
     dss = [rasterio.open(cog_url(k)) for k in keys]
+    de = dn = 0.0
+    if a.align:   # um deslocamento só para todas as células pedidas (erro de posição da cena, quase uma translação)
+        rc = [tuple(map(int, x.split('_'))) for x in a.cells.split(',')]
+        bbox = (EXT['w'] + min(c for _, c in rc) * CLON, EXT['n'] - (max(r for r, _ in rc) + 1) * CLAT,
+                EXT['w'] + (max(c for _, c in rc) + 1) * CLON, EXT['n'] - min(r for r, _ in rc) * CLAT)
+        de, dn, info = s2_offset(bbox, dss[0].crs)
+        print(info)
     for cell in a.cells.split(','):
         r, c = map(int, cell.split('_'))
         t0 = time.time()
         LON, LAT = cell_grid(r, c)
         X, Y = transform('EPSG:4326', dss[0].crs, LON.ravel().tolist(), LAT.ravel().tolist())
-        X = np.array(X).reshape(TS, TS); Y = np.array(Y).reshape(TS, TS)
+        X = np.array(X).reshape(TS, TS) + de; Y = np.array(Y).reshape(TS, TS) + dn
         imgs = [read_rgb(ds, X, Y, a.order) for ds in dss]
         ref = imgs[0]; refL = lum(ref); valid = ref.sum(-1) > 0
         stack, shifts = [], []
@@ -235,6 +279,7 @@ def run_stack(a, sk):
             wgt = np.exp(-(gaussian_filter(dL, 1.5) / 14.0) ** 2)[..., None]
             med = ref + wgt * (med - ref)
         if a.dehaze: med = dehaze(med, a.dehaze)
+        if a.denoise: med, _ = denoise(med, a.denoise)
         if a.deconv: med = deconvolve(med, a.deconv * sk, a.deconv_k)
         out = match_to_base(med, base_tile(r, c), valid, sk)
         info = ''
@@ -242,8 +287,12 @@ def run_stack(a, sk):
             out, info = deshadow(out, LON, LAT, a.deshadow)
         if a.clarity: out = out + a.clarity * (out - np.stack([gaussian_filter(out[..., j], 6 * sk) for j in range(3)], -1))
         if a.unsharp: out = out + a.unsharp * (out - np.stack([gaussian_filter(out[..., j], 0.9 * sk) for j in range(3)], -1))
+        im8 = Image.fromarray(np.clip(out, 0, 255).astype(np.uint8))
         name = f'c_{r}_{c}{a.tag}.jpg'
-        Image.fromarray(np.clip(out, 0, 255).astype(np.uint8)).save(os.path.join(a.out, name), quality=a.quality, optimize=True, progressive=True)
+        if a.format in ('jpg', 'both'):
+            im8.save(os.path.join(a.out, name), quality=a.quality, optimize=True, progressive=True)
+        if a.format in ('webp', 'both'):
+            im8.save(os.path.join(a.out, name[:-4] + '.webp'), quality=a.webp_quality, method=6)
         print(f'{name}: {len(stack)} datas, deslocamentos (px) {" ".join(shifts)} {info}, {time.time() - t0:.1f} s')
     for ds in dss: ds.close()
 
@@ -310,6 +359,10 @@ def main():
     ap.add_argument('--deconv', type=float, default=0.0, help='deconvolução: raio do borrão do sensor em px (0 = nenhuma, ~0,8)')
     ap.add_argument('--deconv-k', dest='deconv_k', type=float, default=0.02, help='regularização da deconvolução (maior = menos ruído)')
     ap.add_argument('--deshadow', type=float, default=0.0, help='correção das sombras da hora da foto, 0–1')
+    ap.add_argument('--denoise', type=float, default=0.0, help='tira o granulado antes de realçar (h do non-local means em múltiplos do ruído, ~0,8)')
+    ap.add_argument('--align', action='store_true', help='encaixa a CBERS na posição da Sentinel-2 antes de ler')
+    ap.add_argument('--format', default='jpg', choices=['jpg', 'webp', 'both'])
+    ap.add_argument('--webp-quality', dest='webp_quality', type=int, default=82)
     ap.add_argument('--size', type=int, default=1024, help='lado do bloco em px (1024 ≈ 2 m, 2048 ≈ 1 m)')
     ap.add_argument('--order', type=int, default=1, help='interpolação ao reprojetar: 1 linear, 3 bicúbica')
     ap.add_argument('--unsharp', type=float, default=0.0, help='nitidez aplicada no arquivo (0 = nenhuma)')
