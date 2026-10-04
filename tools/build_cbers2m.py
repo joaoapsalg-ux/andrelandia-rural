@@ -244,7 +244,10 @@ def run_stack(a, sk):
     keys = a.dates.split(',')
     dss = [rasterio.open(cog_url(k)) for k in keys]
     de = dn = 0.0
-    if a.align:   # um deslocamento só para todas as células pedidas (erro de posição da cena, quase uma translação)
+    if a.offset:   # deslocamento já medido (leste, norte em metros), igual para a cena toda
+        de, dn = map(float, a.offset.split(','))
+        print(f'encaixe fixo: {de:+.1f} m leste, {dn:+.1f} m norte')
+    elif a.align:   # um deslocamento só para todas as células pedidas (erro de posição da cena, quase uma translação)
         rc = [tuple(map(int, x.split('_'))) for x in a.cells.split(',')]
         bbox = (EXT['w'] + min(c for _, c in rc) * CLON, EXT['n'] - (max(r for r, _ in rc) + 1) * CLAT,
                 EXT['w'] + (max(c for _, c in rc) + 1) * CLON, EXT['n'] - min(r for r, _ in rc) * CLAT)
@@ -361,6 +364,8 @@ def main():
     ap.add_argument('--deshadow', type=float, default=0.0, help='correção das sombras da hora da foto, 0–1')
     ap.add_argument('--denoise', type=float, default=0.0, help='tira o granulado antes de realçar (h do non-local means em múltiplos do ruído, ~0,8)')
     ap.add_argument('--align', action='store_true', help='encaixa a CBERS na posição da Sentinel-2 antes de ler')
+    ap.add_argument('--offset', default='', help='encaixe fixo "leste,norte" em metros (já medido; dispensa a Sentinel-2)')
+    ap.add_argument('--checkalign', action='store_true', help='só mede o encaixe em cada célula de --cells (separadamente)')
     ap.add_argument('--format', default='jpg', choices=['jpg', 'webp', 'both'])
     ap.add_argument('--webp-quality', dest='webp_quality', type=int, default=82)
     ap.add_argument('--size', type=int, default=1024, help='lado do bloco em px (1024 ≈ 2 m, 2048 ≈ 1 m)')
@@ -371,6 +376,13 @@ def main():
     a = ap.parse_args()
     if a.inspect:
         return inspect_l4(a.cells)
+    if a.checkalign:   # o deslocamento é o mesmo na cena toda? mede célula por célula
+        with rasterio.open(COG) as ds:
+            for cell in a.cells.split(','):
+                r, c = map(int, cell.split('_'))
+                bbox = (EXT['w'] + c * CLON, EXT['n'] - (r + 1) * CLAT, EXT['w'] + (c + 1) * CLON, EXT['n'] - r * CLAT)
+                print(cell, s2_offset(bbox, ds.crs)[2])
+        return
     global TS
     TS = a.size
     sk = TS / 1024   # os raios dos filtros acompanham o tamanho do bloco
