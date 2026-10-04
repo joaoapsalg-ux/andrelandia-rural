@@ -170,27 +170,46 @@ export class CarLayer {
     ball.name = 'ball'; this.marker.add(ball);
     this.marker.visible = false; this.markerAt = null;
     scene.add(this.marker);
-    // cerca 3D da propriedade escolhida: parede clara que some para cima, com mourões e arame no topo
+    // cerca da propriedade escolhida: mourões de madeira (3D, instanciados) e quatro fios de arame farpado com barriga
+    // entre eles, desenhados num pano vertical; uma faixa de luz suave na base marca a divisa de longe. A altura acompanha
+    // a distância da câmera (de perto parece cerca, de longe vira traço de luz) — ver fenceFor().
     this.fenceMat = new THREE.ShaderMaterial({
-      uniforms: { uColor: { value: new THREE.Color(0xfff4dc) }, uOpacity: { value: 0 }, uPost: { value: 40 }, uTime: { value: 0 }, uLen: { value: 1000 } },
-      vertexShader: /* glsl */ `attribute float h, d; varying float vH, vD;
-        void main() { vH = h; vD = d; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-      fragmentShader: /* glsl */ `uniform vec3 uColor; uniform float uOpacity, uPost, uTime, uLen; varying float vH, vD;
+      uniforms: { uWire: { value: new THREE.Color(0xd9d6cc) }, uGlow: { value: new THREE.Color(0xfff1d6) }, uOpacity: { value: 0 },
+        uPost: { value: 10 }, uTime: { value: 0 }, uLen: { value: 1000 }, uHeight: { value: 4 }, uNear: { value: 1 } },
+      vertexShader: /* glsl */ `attribute float h, d; uniform float uHeight; varying float vH, vD;
+        void main() { vH = h; vD = d; vec3 p = position; p.y += h * uHeight; gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0); }`,
+      fragmentShader: /* glsl */ `uniform vec3 uWire, uGlow; uniform float uOpacity, uPost, uTime, uLen, uNear; varying float vH, vD;
         void main() {
-          float wall = 0.07 + 0.45 * pow(1.0 - vH, 2.2);
-          float post = 1.0 - smoothstep(0.0, 1.5 * fwidth(vD / uPost), abs(fract(vD / uPost + 0.5) - 0.5) - 0.012);
-          float rail = smoothstep(0.93, 0.97, vH);
-          // duas luzes correndo pelo arame, uma volta a cada ~9 s
-          float u = fract(vD / uLen - uTime / 9.0);
-          float run = pow(max(0.0, 1.0 - min(min(u, 1.0 - u), abs(u - 0.5)) * 14.0), 3.0);
-          vec3 c = mix(uColor, vec3(1.0, 0.82, 0.45), run * 0.8);
-          gl_FragColor = vec4(c, uOpacity * clamp(wall + 0.55 * post + (0.6 + 0.4 * run) * rail + 0.25 * run * (1.0 - vH), 0.0, 0.95));
+          float u = fract(vD / uPost);                        // posição entre dois mourões
+          float sag = 0.07 * 4.0 * u * (1.0 - u);             // barriga do arame no meio do vão
+          float px = fwidth(vH), barb = step(0.85, fract(vD / uPost * 7.0));   // farpas a cada ~1/7 do vão
+          float wire = 0.0;
+          for (int i = 0; i < 4; i++) {
+            float dist = abs(vH - (0.30 + 0.19 * float(i) - sag));
+            wire = max(wire, 1.0 - smoothstep(px * (0.55 + barb * 0.9), px * (1.5 + barb * 1.2), dist));
+          }
+          wire *= uNear;                                       // de longe os fios somem e fica só a faixa de luz
+          float glow = (0.10 + 0.32 * (1.0 - uNear)) * pow(1.0 - vH, 2.4);
+          // uma luz correndo pelo fio de cima (uma volta a cada ~12 s)
+          float r = fract(vD / uLen - uTime / 12.0), run = pow(max(0.0, 1.0 - min(r, 1.0 - r) * 18.0), 3.0);
+          float top = 1.0 - smoothstep(px * 0.6, px * 1.8, abs(vH - (0.87 - sag)));
+          vec3 c = mix(uGlow, uWire * (0.85 + 0.25 * vH), wire) + vec3(1.0, 0.78, 0.4) * run * top * 0.9;
+          float a = max(max(wire * 0.95, glow), run * top);
+          if (a < 0.01) discard;
+          gl_FragColor = vec4(c, uOpacity * a);
         }`,
       transparent: true, depthWrite: false, side: THREE.DoubleSide,
     });
     this.fence = new THREE.Mesh(new THREE.BufferGeometry(), this.fenceMat);
     this.fence.renderOrder = 5; this.fence.visible = false; this.fence.frustumCulled = false;
     scene.add(this.fence);
+    // mourões: cilindro de 6 lados, madeira; posição e escala refeitas quando a altura da cerca muda
+    const postGeo = new THREE.CylinderGeometry(1, 1.15, 1, 6, 1); postGeo.translate(0, 0.5, 0);
+    this.postMat = new THREE.MeshLambertMaterial({ color: 0x7a5636, transparent: true, opacity: 0 });
+    this.posts = new THREE.InstancedMesh(postGeo, this.postMat, 4096);
+    this.posts.count = 0; this.posts.visible = false; this.posts.frustumCulled = false;
+    scene.add(this.posts);
+    this.fenceLines = []; this.fenceH = 0;
     this.nb = [];   // vizinhos da escolhida
   }
 
@@ -315,32 +334,36 @@ export class CarLayer {
     this.terrain.setCarState({ dim: this.dim });
     this.vectors.setDim(this.dim);
     this.fenceMat.uniforms.uOpacity.value = this.dim;
-    if (this.dim === 0) { this.terrain.setCarSelection(null); this.fence.visible = false; }
+    this.postMat.opacity = this.dim * this.fenceMat.uniforms.uNear.value;
+    if (this.dim === 0) { this.terrain.setCarSelection(null); this.fence.visible = false; this.posts.visible = false; }
   }
 
-  /** refaz a cerca da escolhida (ao escolher e ao mudar o exagero do relevo) */
+  /** refaz a cerca da escolhida (ao escolher e ao mudar o exagero do relevo): o pano fica no chão e sobe no shader */
   updateFence() {
     const x = this.sel;
     if (!x) return;
-    const t = this.terrain, ex = this.extent(x);
-    const hgt = Math.min(50, Math.max(10, ex.size * 0.02)) * Math.max(1, t.exaggeration);
+    const t = this.terrain;
     const pos = [], hh = [], dd = [], idx = [];
+    this.fenceLines = [];
+    let dist = 0;
     for (const r of x.f.rings) {
       const P = r.map(([la, lo]) => t.frame.toLocal(la, lo));
       if (P[0].x !== P.at(-1).x || P[0].z !== P.at(-1).z) P.push(P[0]);
-      const line = [];   // a cada ~15 m, para a base acompanhar o relevo
+      const line = [];   // a cada ~8 m, para a base acompanhar o relevo
       for (let k = 0; k < P.length - 1; k++) {
-        const a = P[k], b = P[k + 1], n = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.z - a.z) / 15));
+        const a = P[k], b = P[k + 1], n = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.z - a.z) / 8));
         for (let s = 0; s < n; s++) line.push([a.x + ((b.x - a.x) * s) / n, a.z + ((b.z - a.z) * s) / n]);
       }
       line.push([P.at(-1).x, P.at(-1).z]);
-      let dist = 0;
+      const pts = [];
       line.forEach(([px, pz], i) => {
         if (i) dist += Math.hypot(px - line[i - 1][0], pz - line[i - 1][1]);
-        const y = t.groundY(px, pz), v = pos.length / 3;
-        pos.push(px, y, pz, px, y + hgt, pz); hh.push(0, 1); dd.push(dist, dist);
+        const y = t.groundY(px, pz) - 0.3 * t.exaggeration, v = pos.length / 3;
+        pos.push(px, y, pz, px, y, pz); hh.push(0, 1); dd.push(dist, dist);
         if (i) idx.push(v - 2, v - 1, v, v - 1, v + 1, v);
+        pts.push({ x: px, z: pz, y, d: dist });
       });
+      this.fenceLines.push(pts);
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -349,9 +372,49 @@ export class CarLayer {
     g.setIndex(idx);
     this.fence.geometry.dispose();
     this.fence.geometry = g;
-    this.fenceMat.uniforms.uPost.value = Math.max(25, hgt * 1.6);
-    this.fenceMat.uniforms.uLen.value = Math.max(200, dd.reduce((a, b) => Math.max(a, b), 0));
+    this.fenceMat.uniforms.uLen.value = Math.max(200, dist);
+    this.fenceH = 0;   // mourões refeitos no próximo fenceFor()
     this.fence.visible = true;
+  }
+
+  /**
+   * altura da cerca pela distância da câmera (chamado a cada ~200 ms): de perto ~2,5 m (cerca de verdade, um pouco
+   * exagerada), de longe até 45 m com os fios sumindo e a faixa de luz marcando a divisa. Mourões a ~2,4 alturas.
+   */
+  fenceFor(camera) {
+    if (!this.sel || !this.fenceLines.length) return;
+    const ex = this.extent(this.sel), cy = this.terrain.groundY(ex.x, ex.z);
+    const dist = Math.hypot(camera.position.x - ex.x, camera.position.y - cy, camera.position.z - ex.z);
+    const H = Math.min(45, Math.max(2.5, dist * 0.011)), near = 1 - Math.min(1, Math.max(0, (H - 16) / 22));
+    const u = this.fenceMat.uniforms;
+    u.uNear.value = near;
+    this.postMat.opacity = this.dim * near;
+    this.posts.visible = near > 0.03;
+    // de perto a própria cerca marca a divisa: o contorno branco (que flutua alguns metros acima) quase some
+    const sel = this.vectors.batches.find((b) => b.key === 'car-sel');
+    if (sel) sel.mat.opacity = 1 - 0.85 * near * Math.min(1, Math.max(0, (16 - H) / 8));
+    if (this.fenceH && Math.abs(H - this.fenceH) / this.fenceH < 0.08) return;
+    this.fenceH = H;
+    let S = Math.min(140, Math.max(6, H * 2.4));
+    const total = u.uLen.value;
+    if (total / S > this.posts.instanceMatrix.count - 8) S = total / (this.posts.instanceMatrix.count - 8);
+    u.uHeight.value = H; u.uPost.value = S;
+    // mourões a cada S metros ao longo de cada anel (a distância segue a mesma conta do pano, então caem nos "vãos" certos)
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3();
+    const rad = Math.min(1.6, Math.max(0.12, H * 0.035));
+    let n = 0;
+    for (const pts of this.fenceLines) {
+      let k = 0;
+      for (let d = Math.ceil(pts[0].d / S) * S; d <= pts.at(-1).d && n < this.posts.instanceMatrix.count; d += S) {
+        while (k < pts.length - 2 && pts[k + 1].d < d) k++;
+        const a = pts[k], b = pts[k + 1] ?? a, f = b.d > a.d ? (d - a.d) / (b.d - a.d) : 0;
+        p.set(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f, a.z + (b.z - a.z) * f);
+        sc.set(rad, H * 1.06, rad);
+        this.posts.setMatrixAt(n++, m.compose(p, q, sc));
+      }
+    }
+    this.posts.count = n;
+    this.posts.instanceMatrix.needsUpdate = true;
   }
 
   /**
@@ -446,6 +509,7 @@ export class CarLayer {
   // rótulos de área (ha) dos imóveis perto do centro da vista; chamado a cada ~250 ms
   refreshLabels(camera, target) {
     this.#placeMarker();
+    this.fenceFor(camera);
     const t = this.terrain;
     const d = camera.position.distanceTo(target);
     if (!this.on || !this.feats || d > 5500) { this.#clearLabels(); return; }
