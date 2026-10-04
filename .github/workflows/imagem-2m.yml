@@ -1,0 +1,32 @@
+# Gera blocos de 2 m (CBERS-4A) para células escolhidas, lendo só o recorte no COG do INPE (tools/build_cbers2m.py).
+# Não publica nada: devolve as imagens como artefato para conferir antes de entrarem no app.
+name: Imagem de 2 m (teste)
+
+on:
+  workflow_dispatch:
+    inputs:
+      cells:
+        description: 'Células r_c separadas por vírgula'
+        default: '6_11,6_12,7_11,7_12'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --quiet rasterio numpy scipy pillow
+      - name: Ler o recorte de 2 m e fundir (ganho normal e forte)
+        run: |
+          python tools/build_cbers2m.py --cells "${{ inputs.cells }}" --out out2m
+          python tools/build_cbers2m.py --cells "${{ inputs.cells }}" --out out2m --gain 1.5 --tag _forte
+          python tools/build_cbers2m.py --cells "${{ inputs.cells }}" --out out2m --mode puro --tag _puro
+      - uses: actions/upload-artifact@v4
+        with:
+          name: imagem-2m
+          path: out2m
