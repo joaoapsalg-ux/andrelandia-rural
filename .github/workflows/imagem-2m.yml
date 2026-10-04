@@ -25,7 +25,13 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install --quiet rasterio numpy scipy pillow
+      - name: Organização das bandas originais (L4) e estimativa de leitura
+        if: ${{ inputs.variants == 'inspect' }}
+        env:
+          CELLS: ${{ inputs.cells }}
+        run: python tools/build_cbers2m.py --cells "$CELLS" --inspect
       - name: Ler o recorte de 2 m e fundir (uma passada por versão)
+        if: ${{ inputs.variants != 'inspect' }}
         env:
           CELLS: ${{ inputs.cells }}
           VARIANTS: ${{ inputs.variants }}
@@ -36,6 +42,7 @@ jobs:
             python tools/build_cbers2m.py --cells "$CELLS" --out out2m --tag "$tag" $opts
           done
       - uses: actions/upload-artifact@v4
+        if: ${{ inputs.variants != 'inspect' }}
         with:
           name: imagem-2m
           path: out2m

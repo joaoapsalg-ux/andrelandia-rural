@@ -22,6 +22,9 @@ from scipy.ndimage import gaussian_filter, map_coordinates
 
 COG = ('https://data.inpe.br/bdc/data/CB4A-WPM-PCA-FUSED/v001/200/140/2026/7/'
        'CBERS4A_WPM_PCA_RGB321_20260723_200_140.tif')   # 23/07/2026, órbita 200/140 (mesma data da imagem atual)
+# bandas originais da mesma cena (CB4A-WPM-L4-DN-1): pancromática 2 m e azul/verde/vermelho 8 m, para fusão própria
+L4 = ('https://data.inpe.br/bdc/data/CB4A-WPM-L4-DN/2026_07/CBERS_4A_WPM_RAW_2026_07_23.12_41_31_ETC2/200_140_0/'
+      '4_BC_UTM_WGS84/CBERS_4A_WPM_20260723_200_140_L4_BAND{}.tif')
 EXT = dict(w=-44.51, e=-44.06, n=-21.53, s=-21.94)
 COLS, ROWS = 22, 20
 CLON = (EXT['e'] - EXT['w']) / COLS
@@ -47,6 +50,29 @@ def base_tile(r, c):
     return np.asarray(t4.crop((ox, oy, ox + 512, oy + 512)).resize((TS, TS), Image.BICUBIC)).astype(np.float32)
 
 
+def inspect_l4(cells):
+    """lê só os cabeçalhos das bandas L4 e estima quantos bytes o recorte das células exigiria"""
+    os.environ.setdefault('GDAL_DISABLE_READDIR_ON_OPEN', 'EMPTY_DIR')
+    for b in (0, 1, 2, 3):
+        with rasterio.open(L4.format(b)) as ds:
+            bw, bh = ds.block_shapes[0]
+            ovr = ds.overviews(1)
+            tiled = ds.profile.get('tiled', False)
+            tot = 0
+            for cell in cells.split(','):
+                r, c = map(int, cell.split('_'))
+                n = EXT['n'] - r * CLAT; w = EXT['w'] + c * CLON
+                X, Y = transform('EPSG:4326', ds.crs, [w, w + CLON], [n, n - CLAT])
+                win = from_bounds(min(X) - 40, min(Y) - 40, max(X) + 40, max(Y) + 40, ds.transform)
+                # blocos que a janela toca × tamanho do bloco (sem compressão: pior caso)
+                bx = int(np.ceil(win.width / bw)) + 1 if tiled else 1
+                rows = int(np.ceil(win.height / bh)) + 1
+                blk = bw * bh if tiled else ds.width * bh
+                tot += bx * rows * blk * ds.count
+            print(f'BAND{b}: {ds.width}x{ds.height} {ds.crs} res {ds.res} tiled={tiled} bloco {bw}x{bh} '
+                  f'compressão {ds.compression} overviews {ovr} · recorte de {len(cells.split(","))} células ≈ {tot / 1e6:.0f} MB (sem compressão)')
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--cells', required=True)
@@ -58,7 +84,10 @@ def main():
     ap.add_argument('--order', type=int, default=1, help='interpolação ao reprojetar: 1 linear, 3 bicúbica')
     ap.add_argument('--unsharp', type=float, default=0.0, help='nitidez aplicada no arquivo (0 = nenhuma)')
     ap.add_argument('--quality', type=int, default=85)
+    ap.add_argument('--inspect', action='store_true', help='só mostra a organização dos arquivos L4 e estima a leitura')
     a = ap.parse_args()
+    if a.inspect:
+        return inspect_l4(a.cells)
     global TS
     TS = a.size
     sk = TS / 1024   # os raios dos filtros acompanham o tamanho do bloco
