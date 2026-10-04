@@ -1,0 +1,65 @@
+# Gera a imagem de 2 m (CBERS-4A, 23/07/2026) de todas as células do município (tools/municipio_celulas.txt),
+# grava os blocos WebP em data/muni/img/town/, atualiza a lista de células de 2 m em data/muni/grid.js e publica.
+# Receita escolhida nos testes da propriedade de 144 ha ("versão 4"): névoa 0,6 · deconvolução 0,8 · contraste local
+# 0,25 · sombras da hora da foto 0,8 · nitidez leve; encaixe suave pela Sentinel-2 de 30/08/2026 (modelo afim medido
+# em 25 pontos, resíduo mediano 1,2 m).
+name: Imagem de 2 m — município (gera e publica)
+
+on:
+  workflow_dispatch:
+    inputs:
+      cells:
+        description: 'Células r_c separadas por vírgula (vazio = todas de tools/municipio_celulas.txt)'
+        default: ''
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --quiet rasterio numpy scipy pillow scikit-image PyWavelets
+      - name: Gerar os blocos de 2 m
+        env:
+          CELLS_IN: ${{ inputs.cells }}
+          MODEL: '576108.6588,7596590.1156,-7.5973,0.0224,0.0705,-4.5668,-0.1638,0.2189'
+        run: |
+          CELLS="${CELLS_IN:-$(tr -d '\n ' < tools/municipio_celulas.txt)}"
+          echo "$CELLS" | tr ',' '\n' | wc -l
+          python tools/build_cbers2m.py --cells "$CELLS" --out data/muni/img/town --mode stack --dates 20260723_200_140 \
+            --alignmodel "$MODEL" --dehaze 0.6 --clarity 0.25 --order 3 --deconv 0.8 --unsharp 0.1 --deshadow 0.8 \
+            --format webp --webp-quality 82
+      - name: Trocar os blocos antigos e atualizar a lista de células de 2 m
+        run: |
+          rm -f data/muni/img/town/*.jpg data/muni/img/town.json
+          python - <<'EOF'
+          import glob, json, os, re
+          cells = sorted({os.path.basename(p)[2:-5] for p in glob.glob('data/muni/img/town/c_*.webp')},
+                         key=lambda s: tuple(map(int, s.split('_'))))
+          p = 'data/muni/grid.js'
+          s = open(p, encoding='utf-8').read()
+          s = re.sub(r'town: \(r, c\) => `data/muni/img/town/c_\$\{r\}_\$\{c\}\.jpg`', 'town: (r, c) => `data/muni/img/town/c_${r}_${c}.webp`', s)
+          s = re.sub(r"res: '[^']*'", "res: '2 m no município · 4 m em volta'", s, count=1)
+          s = re.sub(r'export const TOWN_CELLS = new Set\(\[.*?\]\);', 'export const TOWN_CELLS = new Set(' + json.dumps(cells) + ');', s, flags=re.S)
+          open(p, 'w', encoding='utf-8').write(s)
+          print(len(cells), 'células de 2 m')
+          EOF
+          du -sh data/muni/img/town
+      - name: Gravar no repositório
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A data/muni/img/town data/muni/grid.js
+          git commit -m 'Imagem de 2 m (CBERS-4A) para o município inteiro' || exit 0
+          git push
+      - name: Publicar o site
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml -R "$GITHUB_REPOSITORY"

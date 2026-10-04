@@ -67,6 +67,7 @@ const FRAG = /* glsl */ `
   uniform float uRelief;
   uniform float uFilm;               // acabamento de cinema (0–1)
   uniform float uSharp, uClarity, uTexel;   // nitidez e clareza da imagem de perto; texel = 1 / lado do bloco
+  uniform float uTileSharp;                 // por célula: 1 nos blocos de 4 m, menos nos de 2 m (já realçados)
 
   vec3 ramp(float t) {
     vec3 c0 = vec3(0.47, 0.60, 0.40), c1 = vec3(0.70, 0.73, 0.49), c2 = vec3(0.80, 0.68, 0.47);
@@ -154,7 +155,7 @@ const FRAG = /* glsl */ `
       vec2 o = vec2(uTexel, 0.0), p = vec2(0.0, uTexel);
       vec3 b1 = (texture2D(uTile, tuv + o).rgb + texture2D(uTile, tuv - o).rgb + texture2D(uTile, tuv + p).rgb + texture2D(uTile, tuv - p).rgb) * 0.25;
       vec3 b4 = (texture2D(uTile, tuv + 4.0 * o).rgb + texture2D(uTile, tuv - 4.0 * o).rgb + texture2D(uTile, tuv + 4.0 * p).rgb + texture2D(uTile, tuv - 4.0 * p).rgb) * 0.25;
-      ti = clamp(ti + uSharp * (ti - b1) + uClarity * (ti - b4), 0.0, 1.0);
+      ti = clamp(ti + uTileSharp * (uSharp * (ti - b1) + uClarity * (ti - b4)), 0.0, 1.0);
     }
     vec3 img = mix(ov, ti, uTileMix);
     // correção de cor da imagem (vinha escura e lavada): meios-tons mais claros, mais saturação e um pouco de contraste
@@ -302,7 +303,7 @@ export class CellTerrain {
     const nw = this.frame.toLocal(n, w), se = this.frame.toLocal(s, e);
     const uniforms = {
       ...this.shared,
-      uTile: { value: this.blank }, uTileMix: { value: 0 },
+      uTile: { value: this.blank }, uTileMix: { value: 0 }, uTileSharp: { value: 1 },
       uTileRect: { value: new THREE.Vector4(0, 0, 1, 1) },
       uOvRect: { value: new THREE.Vector4(c / COLS, 1 - (r + 1) / ROWS, 1 / COLS, 1 / ROWS) },
     };
@@ -454,6 +455,7 @@ export class CellTerrain {
       const entry = this.texCache.get(url);
       entry.users.add(cell);
       u.uTile.value = entry.tex;
+      u.uTileSharp.value = url.includes('/town/') ? 0.35 : 1;   // os blocos de 2 m já vêm realçados do processamento
       u.uTileRect.value.set(...rect);
       cell.fadeStart = performance.now();
       u.uTileMix.value = 0;
