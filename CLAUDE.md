@@ -13,7 +13,12 @@ python serve.py            # http://localhost:8000  (precisa de internet: three.
 `index.html` **não tem** `<!doctype>`, `<head>` nem `<body>`: ele é publicado como Artifact do claude.ai, que acrescenta o
 esqueleto. `serve.py` faz o mesmo localmente. Não acrescente o esqueleto no arquivo.
 
-Publicado em: https://claude.ai/artifact/U4UsjSHVby97AVd9MN14cu (privado; v1.1). A versão anterior, "Andrelândia 3D" v0.8
+**Site:** https://joaoapsalg-ux.github.io/andrelandia-rural/ — repositório público
+https://github.com/joaoapsalg-ux/andrelandia-rural. Cada push na `main` publica sozinho (`.github/workflows/pages.yml`
+acrescenta o esqueleto ao index.html e copia só `src/` e `data/`). Git e GitHub CLI ficam em
+`C:\Program Files\Git\cmd\git.exe` e `C:\Program Files\GitHub CLI\gh.exe`; os commits usam o e-mail noreply do GitHub.
+
+Versão antiga como Artifact: https://claude.ai/artifact/U4UsjSHVby97AVd9MN14cu (privado; v1.1). A versão anterior, "Andrelândia 3D" v0.8
 (com Strava, Copernicus, árvores 3D), é outro artifact: https://claude.ai/artifact/So1np1JnUMUf1T6y35TeVd — o código dela
 está em `legado/andrelandia3d-v0.8/` (sem os dados).
 
