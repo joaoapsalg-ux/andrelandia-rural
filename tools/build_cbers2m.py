@@ -115,6 +115,71 @@ def register(ref, img):
     return dy, dx
 
 
+def deconvolve(img, sigma, k):
+    """desfaz em parte o borrão do sensor (Wiener, borrão gaussiano de raio sigma px), só no brilho"""
+    L = lum(img)
+    Lp = np.pad(L, 32, mode='reflect')
+    hp, wp = Lp.shape
+    fy = np.fft.fftfreq(hp)[:, None]; fx = np.fft.fftfreq(wp)[None, :]
+    H = np.exp(-2 * np.pi ** 2 * sigma ** 2 * (fx ** 2 + fy ** 2))
+    R = np.fft.ifft2(np.fft.fft2(Lp) * H / (H ** 2 + k)).real[32:-32, 32:-32]
+    return img + (R - L)[..., None]
+
+
+# relevo do app (ANADEM 30 m, PNG Terrarium) e hora da passagem da cena (item L4 do INPE: 12:48:02 UTC)
+DEM = dict(path='data/muni/dem/anadem.png', lon0=-44.510264686724526, lat0=-21.529922414492574, d=0.00026949458523585647)
+SCENE_UTC = (2026, 7, 23, 12, 48)
+
+
+def sun_position(lat, lon, y, mo, d, hh, mm):
+    """azimute (graus a partir do norte, horário) e elevação do sol — aproximação NOAA, igual à do app (src/sun.js)"""
+    import datetime
+    t = datetime.datetime(y, mo, d, hh, mm, tzinfo=datetime.timezone.utc).timestamp()
+    n = t / 86400 + 2440587.5 - 2451545.0
+    L = (280.46 + 0.9856474 * n) % 360; g = np.radians((357.528 + 0.9856003 * n) % 360)
+    lam = np.radians(L + 1.915 * np.sin(g) + 0.02 * np.sin(2 * g)); eps = np.radians(23.439 - 0.0000004 * n)
+    ra = np.arctan2(np.cos(eps) * np.sin(lam), np.cos(lam)); dec = np.arcsin(np.sin(eps) * np.sin(lam))
+    gmst = (18.697374558 + 24.06570982441908 * n) % 24
+    ha = np.radians(gmst * 15 + lon) - ra; phi = np.radians(lat)
+    el = np.arcsin(np.sin(phi) * np.sin(dec) + np.cos(phi) * np.cos(dec) * np.cos(ha))
+    az = (np.degrees(np.arctan2(-np.sin(ha), np.tan(dec) * np.cos(phi) - np.sin(phi) * np.cos(ha))) + 360) % 360
+    return az, np.degrees(el)
+
+
+_dem = None
+def terrain_cos(LON, LAT):
+    """cosseno do ângulo entre o sol da hora da foto e a encosta, em cada pixel (relevo de 30 m suavizado)"""
+    global _dem
+    if _dem is None:
+        rgb = np.asarray(Image.open(DEM['path']).convert('RGB')).astype(np.float64)
+        z = rgb[..., 0] * 256 + rgb[..., 1] + rgb[..., 2] / 256 - 32768
+        z = gaussian_filter(z, 1.0)
+        latc = DEM['lat0'] - z.shape[0] / 2 * DEM['d']
+        dx = DEM['d'] * 111320 * np.cos(np.radians(latc)); dy = DEM['d'] * 110574
+        gy, gx = np.gradient(z, dy, dx)          # gy: para o sul (linhas descem), gx: para o leste
+        _dem = (gx, -gy)                         # dz/dleste, dz/dnorte
+    gx, gn = _dem
+    ii = (LON - DEM['lon0']) / DEM['d'] - 0.5; jj = (DEM['lat0'] - LAT) / DEM['d'] - 0.5
+    zx = map_coordinates(gx, [jj, ii], order=1, mode='nearest'); zn = map_coordinates(gn, [jj, ii], order=1, mode='nearest')
+    az, el = sun_position(LAT.mean(), LON.mean(), *SCENE_UTC)
+    s = np.array([np.sin(np.radians(az)) * np.cos(np.radians(el)), np.cos(np.radians(az)) * np.cos(np.radians(el)), np.sin(np.radians(el))])
+    nrm = np.sqrt(zx ** 2 + zn ** 2 + 1)
+    cos_i = (-zx * s[0] - zn * s[1] + s[2]) / nrm
+    return cos_i, np.sin(np.radians(el)), az, el
+
+
+def deshadow(img, LON, LAT, strength):
+    """C-correction: clareia as encostas que estavam de costas para o sol na hora da foto (e escurece as de frente)"""
+    cos_i, cos_z, az, el = terrain_cos(LON, LAT)
+    L = lum(img)
+    ok = (L > 20) & (L < 240)
+    m, b = np.polyfit(cos_i[ok].ravel()[::7], L[ok].ravel()[::7], 1)   # brilho ~ m·cos_i + b
+    c = b / max(m, 1e-3)
+    f = np.clip((cos_z + c) / (cos_i + c), 0.65, 1.7)
+    f = 1 + strength * (gaussian_filter(f, 3) - 1)
+    return img * f[..., None], f'sol {az:.0f}° / {el:.0f}°, c={c:.2f}, fator {f.min():.2f}–{f.max():.2f}'
+
+
 def run_sheet(a):
     """folha de prova: o recorte da propriedade (--bbox w,s,e,n) em cada data, lado a lado, com a data escrita"""
     from PIL import ImageDraw
@@ -173,12 +238,16 @@ def run_stack(a, sk):
             wgt = np.exp(-(gaussian_filter(dL, 1.5) / 14.0) ** 2)[..., None]
             med = ref + wgt * (med - ref)
         if a.dehaze: med = dehaze(med, a.dehaze)
+        if a.deconv: med = deconvolve(med, a.deconv * sk, a.deconv_k)
         out = match_to_base(med, base_tile(r, c), valid, sk)
+        info = ''
+        if a.deshadow:   # depois do casamento de cor: o bloco de 4 m também tem as sombras da hora da foto
+            out, info = deshadow(out, LON, LAT, a.deshadow)
         if a.clarity: out = out + a.clarity * (out - np.stack([gaussian_filter(out[..., j], 6 * sk) for j in range(3)], -1))
         if a.unsharp: out = out + a.unsharp * (out - np.stack([gaussian_filter(out[..., j], 0.9 * sk) for j in range(3)], -1))
         name = f'c_{r}_{c}{a.tag}.jpg'
         Image.fromarray(np.clip(out, 0, 255).astype(np.uint8)).save(os.path.join(a.out, name), quality=a.quality, optimize=True, progressive=True)
-        print(f'{name}: {len(stack)} datas, deslocamentos (px) {" ".join(shifts)}, {time.time() - t0:.1f} s')
+        print(f'{name}: {len(stack)} datas, deslocamentos (px) {" ".join(shifts)} {info}, {time.time() - t0:.1f} s')
     for ds in dss: ds.close()
 
 
@@ -241,6 +310,9 @@ def main():
     ap.add_argument('--bbox', default='-44.2700,-21.6870,-44.2495,-21.6635', help='w,s,e,n da folha de prova')
     ap.add_argument('--dehaze', type=float, default=0.0, help='correção de névoa (0 = nenhuma, ~0,6 típico)')
     ap.add_argument('--clarity', type=float, default=0.0, help='contraste local (raio ~12 m)')
+    ap.add_argument('--deconv', type=float, default=0.0, help='deconvolução: raio do borrão do sensor em px (0 = nenhuma, ~0,8)')
+    ap.add_argument('--deconv-k', dest='deconv_k', type=float, default=0.02, help='regularização da deconvolução (maior = menos ruído)')
+    ap.add_argument('--deshadow', type=float, default=0.0, help='correção das sombras da hora da foto, 0–1')
     ap.add_argument('--size', type=int, default=1024, help='lado do bloco em px (1024 ≈ 2 m, 2048 ≈ 1 m)')
     ap.add_argument('--order', type=int, default=1, help='interpolação ao reprojetar: 1 linear, 3 bicúbica')
     ap.add_argument('--unsharp', type=float, default=0.0, help='nitidez aplicada no arquivo (0 = nenhuma)')
