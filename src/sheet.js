@@ -15,7 +15,7 @@ const F = {
  * monta a folha e devolve um Blob PNG
  * x: propriedade escolhida · car: CarLayer · view: canvas com a vista 3D · water: resultado de PropertyWater.show ou null
  */
-export async function buildSheet({ x, car, view, water, access, agro, vigor, nf, fmtDate, exag, today = new Date() }) {
+export async function buildSheet({ x, car, view, water, access, agro, vigor, apt, nf, fmtDate, exag, today = new Date() }) {
   await Promise.all(['700 72px "Barlow Condensed"', '600 20px "Barlow Condensed"', '400 18px Barlow', '600 18px Barlow', '400 18px "IBM Plex Mono"', '500 18px "IBM Plex Mono"']
     .map((f) => document.fonts?.load(f).catch(() => null)));
   const f = x.f, s = f.s;
@@ -160,6 +160,16 @@ export async function buildSheet({ x, car, view, water, access, agro, vigor, nf,
     y = head('Vizinhos', xR, y);
     y = kv('Fazem divisa', `${side.length}${over.length ? ` · ${over.length} sobreposta${over.length > 1 ? 's' : ''}` : ''}`, xR, y);
     for (const n of side.slice(0, 3)) y = kv(`${nf(n.x.f.ha, n.x.f.ha < 10 ? 1 : 0)} ha`, `${n.m >= 1000 ? `${nf(n.m / 1000, 1)} km` : `${nf(Math.round(n.m / 10) * 10)} m`} de divisa`, xR + 16, y, COL - 16);
+  }
+  if (apt) {   // aptidão (estimativa do app)
+    const { st, app, rl, livre, CAP, CROPS } = apt, fha = (v) => `${nf(v, v < 10 ? 1 : 0)} ha`;
+    const caps = st.cap.map((v, i) => [i, v]).filter(([i, v]) => i && v > 0).sort((a, b) => b[1] - a[1]).slice(0, 2);
+    const crops = st.crop.map(([gd], i) => [CROPS[i].name, gd]).filter((c) => c[1] >= 0.5).sort((a, b) => b[1] - a[1]).slice(0, 2);
+    y += 12;
+    y = head('Aptidão (estimativa)', xR, y);
+    y = kv('Livre para produzir', `${fha(livre)} (APP ${fha(app)} · RL ${fha(rl)})`, xR, y);
+    y = kv('Capacidade de uso', caps.map(([i, v]) => `${CAP[i].k} ${nf((100 * v) / st.ha)}%`).join(' · '), xR, y);
+    if (crops.length) y = kv('Área boa para', crops.map(([n, v]) => `${n.split(' (')[0].toLowerCase()} ${fha(v)}`).join(' · '), xR, y);
   }
   // linha 3 (largura toda): clima, solo e as melhores épocas de plantio do ZARC
   y = Math.max(yL2, y);

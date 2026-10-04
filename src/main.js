@@ -156,14 +156,42 @@ async function start() {
     controls.target.lerpVectors(flight.tFrom, flight.tTo, k);
     if (flight.t >= 1) flight = null;
   }
+  // visada livre: altura mínima da câmera (acima do centro) para a linha até cada alvo passar acima do relevo, com
+  // folga que cresce do alvo (0) até a câmera (margem). Encostas e morros na frente faziam o próprio relevo tampar a terra.
+  function clearHeight(c, ang, r, pts) {
+    const cx = c.x + r * Math.sin(ang), cz = c.z + r * Math.cos(ang), margin = 18 * terrain.exaggeration;
+    let need = -Infinity;
+    for (const p of pts) for (let k = 2; k <= 22; k++) {
+      const t = k / 24, x = p.x + (cx - p.x) * t, z = p.z + (cz - p.z) * t;
+      need = Math.max(need, p.y + (terrain.groundY(x, z) + margin * t - p.y) / t - c.y);
+    }
+    return need;
+  }
+  /** alvos que precisam aparecer: o centro e quatro pontos em volta (a ~30% do tamanho da propriedade) */
+  function propPts(x) {
+    const ex = carLayer.extent(x), q = ex.size * 0.3, lift = 4 * terrain.exaggeration;
+    return [[0, 0], [q, 0], [-q, 0], [0, q], [0, -q]].map(([dx, dz]) => {
+      const px = ex.x + dx, pz = ex.z + dz;
+      return new THREE.Vector3(px, terrain.groundY(px, pz) + lift, pz);
+    });
+  }
   // sobrevoo: a câmera dá a volta em torno de um centro, como um drone
   // hRatio: altura da câmera em relação ao raio (0,2 rasante … 1,6 quase de cima) · speed: multiplica a volta
-  function startOrbit(center, r, label = 'Sobrevoando', { hRatio = 0.55, speed = 1, dur = 2 } = {}) {
+  // pts: alvos que não podem ficar escondidos atrás do relevo (a câmera escolhe o ângulo mais limpo e sobe quando preciso)
+  function startOrbit(center, r, label = 'Sobrevoando', { hRatio = 0.55, speed = 1, dur = 2, pts = null } = {}) {
     const h = r * hRatio;
-    const ang = Math.atan2(camera.position.x - center.x, camera.position.z - center.z);
-    const to = new THREE.Vector3(center.x + r * Math.sin(ang), center.y + h, center.z + r * Math.cos(ang));
+    let ang = Math.atan2(camera.position.x - center.x, camera.position.z - center.z), hStart = h;
+    if (pts) {   // entre os ângulos perto do atual, o de visada mais limpa (sem dar meia-volta)
+      let best = Infinity, bestAng = ang;
+      for (let d = -1; d <= 1.001; d += 0.25) {
+        const need = Math.max(h, clearHeight(center, ang + d, r, pts)), cost = need + Math.abs(d) * r * 0.15;
+        if (cost < best) { best = cost; hStart = need; bestAng = ang + d; }
+      }
+      ang = bestAng;
+    }
+    const to = new THREE.Vector3(center.x + r * Math.sin(ang), center.y + hStart, center.z + r * Math.cos(ang));
     flight = { t: 0, from: camera.position.clone(), to, tFrom: controls.target.clone(), tTo: center.clone(), dur };
-    orbit = { c: center.clone(), r, h, ang, speed: (speed * 2 * Math.PI) / Math.max(28, Math.min(60, r / 25)) };
+    orbit = { c: center.clone(), r, h, hCur: hStart, ang, pts, speed: (speed * 2 * Math.PI) / Math.max(28, Math.min(60, r / 25)) };
     $('#tool-orbit').setAttribute('aria-pressed', 'true');
     if (!tool) { $('#tool-hint').hidden = false; $('#tool-hint-text').textContent = `${label} · toque no mapa para parar`; }
   }
@@ -174,7 +202,11 @@ async function start() {
   function stepOrbit(dt) {
     if (!orbit || flight) return;
     orbit.ang += dt * orbit.speed;
-    camera.position.set(orbit.c.x + orbit.r * Math.sin(orbit.ang), orbit.c.y + orbit.h, orbit.c.z + orbit.r * Math.cos(orbit.ang));
+    if (orbit.pts) {   // sobe antes do morro (olha ~2 s à frente) e desce devagar depois, sem balançar
+      const need = Math.min(orbit.r * 2.5, Math.max(orbit.h, clearHeight(orbit.c, orbit.ang, orbit.r, orbit.pts), clearHeight(orbit.c, orbit.ang + 0.3, orbit.r, orbit.pts)));
+      orbit.hCur += (need - orbit.hCur) * Math.min(1, dt * (need > orbit.hCur ? 2.5 : 0.5));
+    }
+    camera.position.set(orbit.c.x + orbit.r * Math.sin(orbit.ang), orbit.c.y + (orbit.hCur ?? orbit.h), orbit.c.z + orbit.r * Math.cos(orbit.ang));
     controls.target.copy(orbit.c);
   }
   controls.addEventListener('start', () => { flight = null; follow = false; if (orbit) stopOrbit(); });
@@ -1130,7 +1162,14 @@ async function start() {
     await until(() => !flight, 3000);
     await until(() => { const s = terrain.stats(); return s.loading === 0 && s.tiles >= s.near; }, 7000);
     await new Promise((r) => setTimeout(r, 700));   // transição das imagens
+    // a foto da folha sai sempre com luz de manhã, sem nuvem nem neblina (a tela pode estar de noite ou no pôr do sol)
+    // e com a imagem de satélite, qualquer que seja o chão escolhido na tela
+    const clouds = terrain.shared.uClouds.value;
+    terrain.setClouds(0); applySun({ min: 10 * 60 + 30, save: false });
+    if (style.surface !== 'satellite') terrain.setStyle({ surface: 'satellite' });
     const view = captureView(1600, 1000);
+    if (style.surface !== 'satellite') terrain.setStyle({ surface: style.surface });
+    terrain.setClouds(clouds); applySun();
     let agroInfo = null;
     try {
       await agro.load();
@@ -1138,7 +1177,17 @@ async function start() {
       agroInfo = { climate, soil, text: agroText(climate, soil, nf), zarc: FEATURED.map((n) => agro.zarcFor(n, soil)).filter(Boolean).map((z) => ({ ...z, best: bestWindow(z.risk) })) };
     } catch { /* sem os arquivos: a folha sai sem essa parte */ }
     await carLayer.loadVigor();
-    return buildSheet({ x, car: carLayer, view, water: waterInfo?.x === x ? waterInfo.st : null, access: roads.route(x), agro: agroInfo, vigor: carLayer.vigorOf(x), nf, fmtDate, exag: terrain.exaggeration });
+    // aptidão (estimativa): área livre para produzir, capacidade de uso e as culturas com mais área boa
+    let aptInfo = null;
+    try {
+      await apt.load();
+      const st = apt.statsFor(x.f.rings), s = x.f.s;
+      if (st && s) {
+        const [aha, anat] = s.app, natOut = Math.max(0, (s.n25 / 100) * s.a - (aha * anat) / 100);
+        aptInfo = { st, app: aha, rl: 0.2 * s.a, livre: Math.max(0, s.a - aha - Math.max(0.2 * s.a, natOut)), CAP, CROPS };
+      }
+    } catch { /* sem a aptidão: a folha sai sem essa parte */ }
+    return buildSheet({ x, car: carLayer, view, water: waterInfo?.x === x ? waterInfo.st : null, access: roads.route(x), agro: agroInfo, vigor: carLayer.vigorOf(x), apt: aptInfo, nf, fmtDate, exag: terrain.exaggeration });
   }
   // no Artifact o arquivo sai pela capacidade "downloads" (o visitante confirma); fora dele, download comum
   async function saveFile(blob, filename) {
@@ -1170,7 +1219,8 @@ async function start() {
     terrain, carLayer, drop, nf, fmtLen, years: YEARS, loadYear, blobOf, muni: hist,
     access: { route: (x) => roads.route(x), layer: accessLayer }, agro, fade: crossfade,
     // vigor: a cena do pasto usa o mapa das águas (a estação escolhida volta no fim, em setSurface)
-    vigor: { ensure: () => loadVigor('aguas'), of: (x) => carLayer.vigorOf(x) },
+    // (religa a textura do vigor: a aptidão usa o mesmo encaixe e pode estar nele)
+    vigor: { ensure: () => loadVigor('aguas').then((t) => { if (t) terrain.setVigorTexture(t, VIG_RANGE.aguas); return t; }), of: (x) => carLayer.vigorOf(x) },
     // relógio: o dia passa durante a demonstração (a hora da pessoa volta no fim)
     clock: {
       set: (m) => { const mm = ((m % 1440) + 1440) % 1440; lightUI.time.value = String(Math.round(mm / 5) * 5); return applySun({ min: mm, save: false }); },
@@ -1185,7 +1235,7 @@ async function start() {
       const ex = carLayer.extent(x), { lat, lon } = frame.toLatLon(ex.x, ex.z), c = terrain.worldPosition(lat, lon);
       const r = Math.max(550, ex.size * 1.15 * Math.max(1, 1.1 / camera.aspect));
       const S = { open: [1.15, 0.55, 1], top: [0.55, 1.6, 0.5], low: [0.85, 0.2, 0.8], close: [0.8, 0.4, 0.7], wide: [1.7, 0.75, 0.6] }[kind] ?? [1, 0.55, 1];
-      startOrbit(c, r * S[0], 'Demonstração', { hRatio: S[1], speed: S[2], dur: 2.2 });
+      startOrbit(c, r * S[0], 'Demonstração', { hRatio: S[1], speed: S[2], dur: 2.2, pts: propPts(x) });
     },
     el: { box: $('#demo'), cap: $('#demo-cap'), step: $('#demo-step'), title: $('#demo-title'), text: $('#demo-text'), extra: $('#demo-extra'), note: $('#demo-note'), prog: $('#demo-prog'), badge: $('#year-badge'), clock: $('#demo-clock') },
     onStart: (x) => {
@@ -1198,7 +1248,7 @@ async function start() {
       layout();   // o menu sai e o mapa ocupa a tela toda
       // primeira tomada: alta e longe; cada cena depois escolhe a sua (onShot). Tela em pé: a câmera fica mais longe
       const ex = carLayer.extent(x), { lat, lon } = frame.toLatLon(ex.x, ex.z);
-      startOrbit(terrain.worldPosition(lat, lon), Math.max(800, ex.size * 2.2 * Math.max(1, 1.1 / camera.aspect)), 'Demonstração', { hRatio: 0.9, speed: 0.5 });
+      startOrbit(terrain.worldPosition(lat, lon), Math.max(800, ex.size * 2.2 * Math.max(1, 1.1 / camera.aspect)), 'Demonstração', { hRatio: 0.9, speed: 0.5, pts: propPts(x) });
     },
     onStop: (x, ended) => {
       stopOrbit();
@@ -1242,7 +1292,7 @@ async function start() {
     if (act === 'orbit') {
       const ex = carLayer.extent(x); const { lat, lon } = frame.toLatLon(ex.x, ex.z);
       if (mqPhone.matches) setCollapsed(true);   // celular: a gaveta sai da frente; o contorno continua destacado
-      startOrbit(terrain.worldPosition(lat, lon), Math.max(500, ex.size * 1.05), `Sobrevoando a propriedade de ${nf(x.f.ha, x.f.ha < 10 ? 1 : 0)} ha`);
+      startOrbit(terrain.worldPosition(lat, lon), Math.max(500, ex.size * 1.05), `Sobrevoando a propriedade de ${nf(x.f.ha, x.f.ha < 10 ? 1 : 0)} ha`, { pts: propPts(x) });
     }
     if (act === 'mine') {
       mine = mine === x.f.cod ? null : x.f.cod;
@@ -1514,7 +1564,7 @@ async function start() {
   openFromHash();   // link direto: #car=código
   setTimeout(() => { terrain.buildRelief(); terrain.setRelief(1); }, 400);   // volume do relevo (~0,1 s, depois do 1º quadro)
 
-  window.app = { THREE, renderer, scene, camera, controls, terrain, hf, frame, vectors, carLayer, openCarCard, demo, setWater, makeSheet, drop, rain, profile, setSurface, setYearPos, setSplit, startOrbit, flyToView, VIEWS, setTool, showPane, setCollapsed, loadVigor };
+  window.app = { THREE, renderer, scene, camera, controls, terrain, hf, frame, vectors, carLayer, openCarCard, demo, setWater, makeSheet, drop, rain, profile, setSurface, setYearPos, setSplit, startOrbit, flyToView, VIEWS, setTool, showPane, setCollapsed, loadVigor, clearHeight, propPts };
 }
 
 start().catch((err) => {
