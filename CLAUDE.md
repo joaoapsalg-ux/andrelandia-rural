@@ -108,6 +108,12 @@ por ano); tem `teste = sim` (2 anos, 3 cenas, não publica). Não usar GDAL_HTTP
 inteiro). As cenas do Earth Search já vêm sem o deslocamento de +1000 (conferido nos dados: 0 de 208 cenas).
 Rampa do vigor no shader: faixa por estação (`uVigR`: águas 0,45–0,90; seca 0,20–0,80).
 
+Visual (04/10/2026): "maquete" — paredes em volta da extensão (e no limite, com "só o município") com camadas de
+terra e rocha **estilizadas** (BASE_FRAG em cellterrain.js; não é geologia medida) e sombra suave embaixo; nuvens no céu
+(SkyDome) e a sombra delas no chão (`cloudTexture()`, mesmo ruído, `uClouds`; opção "Nuvens" em Mapa › Aparência);
+propriedade escolhida com brilho na borda, clarão ao escolher (`flashSelection`) e luz correndo no arame da cerca;
+rótulos em pílula (área da escolhida em dourado); tema Automático/Claro/Escuro (`data-theme` no `<html>`).
+
 Dados acrescentados em 03/10/2026 sem Python (a máquina não tem): PowerShell + navegador do app.
 - Clima: Open-Meteo Historical Weather API (5 pontos, 1991–2020) → `andrelandia_clima_openmeteo.json` (ERA5-Land) e
   `andrelandia_chuva_openmeteo_era5.json` (ERA5) → `tools/build_clima.ps1`.

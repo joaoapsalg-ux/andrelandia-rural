@@ -72,6 +72,9 @@ const FRAG = /* glsl */ `
   uniform sampler2D uNdvi;
   uniform float uVig;
   uniform vec2 uVigR;                // faixa de NDVI da rampa (muda com a estação)
+  // sombras de nuvens (ruído que se repete, levado pelo vento) e destaque da propriedade escolhida
+  uniform sampler2D uCloudTex;
+  uniform float uTime, uClouds, uSelFlash;
 
   // rampa do vigor: marrom (pouco verde) → amarelo → verde → verde-escuro
   vec3 vigRamp(float t) {
@@ -195,6 +198,12 @@ const FRAG = /* glsl */ `
       float rl = texture2D(uRel, vec2(ovUv.x * uRelX.x + uRelX.y, ovUv.y * uRelX.z + uRelX.w)).r * 2.0 - 1.0;
       col *= 1.0 + uRelief * 0.3 * rl * (1.0 - smoothstep(20000.0, 45000.0, vDepth) * 0.5);
     }
+    if (uClouds > 0.0) {   // sombra de nuvens: duas escalas do mesmo ruído, andando com o vento
+      vec2 cp = ovUv * uExtM, wind = vec2(11.0, 5.0) * uTime;
+      float cn = texture2D(uCloudTex, (cp + wind) / 7000.0).r * 0.65 + texture2D(uCloudTex, (cp + wind * 1.3) / 2300.0 + 0.37).r * 0.35;
+      float cs = smoothstep(0.52, 0.72, cn) * uClouds * smoothstep(0.0, 0.15, uSunL.y);
+      col *= mix(vec3(1.0), vec3(0.62, 0.66, 0.74), cs);   // sombra levemente azulada (luz do céu)
+    }
     if (uSplit >= 0.0 && abs(gl_FragCoord.x - uSplit) < 1.5) col = vec3(1.0);
     col *= uDim;
     // propriedade escolhida (R = dentro, G = borda suave)
@@ -241,6 +250,8 @@ const FRAG = /* glsl */ `
     if (uSelDim > 0.0) {   // fora da propriedade escolhida: mais escuro e quase sem cor; perto da borda, menos
       vec3 dimmed = mix(vec3(dot(col, vec3(0.3, 0.59, 0.11))), col, 0.35) * 0.55;
       col = mix(col, dimmed, uSelDim * (1.0 - max(max(selM.r, selM.g * 0.5), up * 0.6)));
+      col += vec3(1.0, 0.86, 0.58) * selM.g * 0.11 * uSelDim;                               // brilho quente na borda
+      col = mix(col, col * 1.28 + vec3(0.05, 0.04, 0.02), selM.r * uSelFlash);              // clarão ao escolher
     }
     // perspectiva aérea: o ar entre a câmera e o chão clareia e azula o que está longe (sensação de distância)
     col = mix(col, uFog, 0.38 * (1.0 - exp(-vDepth / 26000.0)));
@@ -256,6 +267,71 @@ const FRAG = /* glsl */ `
     gl_FragColor = vec4(col, 1.0);
   }
 `;
+
+/** ruído suave que se repete (256 px, 4 oitavas): nuvens no chão e no céu */
+export function cloudTexture() {
+  const N = 256, data = new Uint8Array(N * N * 4);
+  let seed = 20261004;
+  const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+  const oct = [[6, 0.5], [12, 0.27], [24, 0.15], [48, 0.08]];
+  const grids = oct.map(([g]) => Float32Array.from({ length: g * g }, rnd));
+  const sm = (t) => t * t * (3 - 2 * t);
+  let lo = Infinity, hi = -Infinity;
+  const v = new Float32Array(N * N);
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    let s = 0;
+    oct.forEach(([g, w], k) => {
+      const fx = (x / N) * g, fy = (y / N) * g, ix = Math.floor(fx), iy = Math.floor(fy), tx = sm(fx - ix), ty = sm(fy - iy);
+      const G = grids[k], at = (i, j) => G[(j % g) * g + (i % g)];
+      s += w * ((at(ix, iy) * (1 - tx) + at(ix + 1, iy) * tx) * (1 - ty) + (at(ix, iy + 1) * (1 - tx) + at(ix + 1, iy + 1) * tx) * ty);
+    });
+    v[y * N + x] = s; lo = Math.min(lo, s); hi = Math.max(hi, s);
+  }
+  for (let i = 0; i < N * N; i++) { const b = Math.round(((v[i] - lo) / (hi - lo)) * 255); data.set([b, b, b, 255], i * 4); }
+  const tex = new THREE.DataTexture(data, N, N);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearMipmapLinearFilter; tex.generateMipmaps = true;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+// paredes da "maquete": camadas de terra e rocha pela profundidade abaixo do chão (estilizadas, não é geologia medida)
+const BASE_VERT = /* glsl */ `
+  attribute float depth, along;
+  varying float vD, vS, vVD;
+  varying vec3 vW;
+  void main() {
+    vD = depth; vS = along;
+    vec4 w = modelMatrix * vec4(position, 1.0);
+    vW = w.xyz;
+    vec4 mv = viewMatrix * w;
+    vVD = -mv.z;
+    gl_Position = projectionMatrix * mv;
+  }`;
+const BASE_FRAG = /* glsl */ `
+  uniform vec3 uSunL, uSunCol, uFog;
+  uniform float uSunI, uAmb, uFogNear, uFogFar, uSelDim, uDim, uBaseH, uBotY;
+  varying float vD, vS, vVD;
+  varying vec3 vW;
+  float h1(float x) { return fract(sin(x * 127.1) * 43758.5453); }
+  float n1(float x) { float i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f); return mix(h1(i), h1(i + 1.0), f); }
+  void main() {
+    float d = vD + n1(vS / 160.0) * 22.0 + n1(vS / 41.0) * 6.0 - 10.0;   // camadas onduladas
+    vec3 top = vec3(0.23, 0.19, 0.12), red = vec3(0.55, 0.24, 0.13), ochre = vec3(0.74, 0.47, 0.24), sap = vec3(0.79, 0.68, 0.50), rock = vec3(0.40, 0.38, 0.36);
+    vec3 c = d < 20.0 ? top : d < 120.0 ? mix(red, mix(red, ochre, 0.45), smoothstep(20.0, 120.0, d))
+           : d < 300.0 ? mix(ochre, sap, smoothstep(120.0, 300.0, d)) : mix(sap, rock, smoothstep(300.0, 420.0, d));
+    c *= 0.9 + 0.2 * n1(d / 6.0 + n1(vS / 70.0) * 2.0);                     // bandamento fino
+    if (d > 420.0) c *= 0.82 + 0.3 * n1(d / 15.0 + vS / 500.0);            // rocha em faixas
+    vec3 n = normalize(cross(dFdx(vW), dFdy(vW)));
+    if (!gl_FrontFacing) n = -n;
+    float lam = abs(dot(n, normalize(uSunL)));
+    vec3 col = c * (uAmb * 1.15 + uSunCol * uSunI * lam * 0.95);
+    col *= mix(0.5, 1.0, smoothstep(0.0, uBaseH, vW.y - uBotY));          // mais escuro perto do pé (sombra de contato)
+    col *= uDim * (1.0 - 0.45 * uSelDim);
+    col = mix(col, uFog, 0.22 * (1.0 - exp(-vVD / 26000.0)));
+    col = mix(col, uFog, clamp((vVD - uFogNear) / (uFogFar - uFogNear), 0.0, 1.0));
+    gl_FragColor = vec4(col, 1.0);
+  }`;
 
 export class CellTerrain {
   constructor(hf, frame, { baseElev, colorRange, imagerySet, renderer }) {
@@ -300,7 +376,11 @@ export class CellTerrain {
       uRel: { value: blank }, uRelX: { value: new THREE.Vector4(1, 0, 1, 0) }, uRelief: { value: 0 }, uFilm: { value: 0 },
       uSharp: { value: 0 }, uClarity: { value: 0 }, uTexel: { value: 1 / 1024 },
       uNdvi: { value: blank }, uVig: { value: 0 }, uVigR: { value: new THREE.Vector2(0.45, 0.9) },
+      uCloudTex: { value: blank }, uTime: { value: 0 }, uClouds: { value: 0 }, uSelFlash: { value: 0 },
     };
+    this.cloudTex = cloudTexture();
+    this.shared.uCloudTex.value = this.cloudTex;
+    this.flashAt = -1e9;
     {
       const nw = frame.toLocal(EXTENT.n, EXTENT.w), se = frame.toLocal(EXTENT.s, EXTENT.e);
       this.shared.uExtM.value.set(se.x - nw.x, se.z - nw.z);
@@ -314,6 +394,7 @@ export class CellTerrain {
     for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) this.#makeCell(r, c);
     this.chunks = this.cells.map((c) => c.mesh);
     this.skirtMaterial = null;
+    this.#buildBase();
     this.setExaggeration(1);
   }
 
@@ -487,6 +568,9 @@ export class CellTerrain {
   // transição suave quando a imagem chega; libera texturas sem uso
   animate() {
     const now = performance.now();
+    this.shared.uTime.value = (now / 1000) % 100000;
+    const fl = 1 - (now - this.flashAt) / 1100;
+    this.shared.uSelFlash.value = fl > 0 ? fl * fl : 0;
     for (const cell of this.cells) {
       if (cell.tileUrl && cell.uniforms.uTileMix.value < 1) {
         cell.uniforms.uTileMix.value = Math.min(1, (now - cell.fadeStart) / 400);
@@ -535,32 +619,87 @@ export class CellTerrain {
     return px[(j * W + i) * 4] > 127;
   }
 
+  // --- "maquete": paredes com camadas de terra e rocha + sombra suave embaixo ---------------------------
+  get #bottom() { return Math.min(this.hf.min ?? this.baseElev, this.baseElev) - 520; }
+  #baseMat() {
+    this.baseMaterial ??= new THREE.ShaderMaterial({
+      vertexShader: BASE_VERT, fragmentShader: BASE_FRAG, side: THREE.DoubleSide,
+      uniforms: { ...this.shared, uBaseH: { value: 150 }, uBotY: { value: 0 } },
+    });
+    return this.baseMaterial;
+  }
+  /** faixas verticais do chão até o fundo; strips: listas de [lat, lon] · push: m para fora · drop: topo abaixo do chão */
+  #wallGeometry(strips, { push = 0, drop = 0 } = {}) {
+    const f = this.frame, hf = this.hf, B = this.#bottom;
+    const pos = [], depth = [], along = [], idx = [];
+    let s = 0;
+    for (const { pts, nx = 0, nz = 0 } of strips) {
+      const dense = [];
+      for (let k = 0; k < pts.length - 1; k++) {
+        const [la, oa] = pts[k], [lb, ob] = pts[k + 1];
+        const a = f.toLocal(la, oa), b = f.toLocal(lb, ob);
+        const n = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.z - a.z) / 25));
+        for (let q = 0; q < n; q++) { const t = q / n; dense.push([la + (lb - la) * t, oa + (ob - oa) * t]); }
+      }
+      dense.push(pts[pts.length - 1]);
+      let prev = null;
+      dense.forEach(([lat, lon], k) => {
+        const p = f.toLocal(lat, lon);
+        if (prev) s += Math.hypot(p.x - prev.x, p.z - prev.z);
+        prev = p;
+        const y = hf.elevation(lat, lon) - drop, v = pos.length / 3;
+        pos.push(p.x + nx * push, y, p.z + nz * push, p.x + nx * push, B, p.z + nz * push);
+        depth.push(drop, y + drop - B); along.push(s, s);
+        if (k) idx.push(v - 2, v - 1, v, v, v - 1, v + 1);
+      });
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('depth', new THREE.Float32BufferAttribute(depth, 1));
+    g.setAttribute('along', new THREE.Float32BufferAttribute(along, 1));
+    g.setIndex(idx);
+    g.computeBoundingSphere();
+    return g;
+  }
+  #buildBase() {
+    const E = EXTENT, f = this.frame;
+    // bordas da extensão, cada uma com a normal para fora (x leste, z sul); a parede fica 2 m para fora das saias
+    const strips = [
+      { pts: [[E.n, E.w], [E.n, E.e]], nx: 0, nz: -1 }, { pts: [[E.n, E.e], [E.s, E.e]], nx: 1, nz: 0 },
+      { pts: [[E.s, E.e], [E.s, E.w]], nx: 0, nz: 1 }, { pts: [[E.s, E.w], [E.n, E.w]], nx: -1, nz: 0 },
+    ];
+    this.base = new THREE.Mesh(this.#wallGeometry(strips, { push: 2, drop: 6 }), this.#baseMat());
+    this.base.frustumCulled = false;
+    this.group.add(this.base);
+    // sombra: plano escuro sob a maquete que esmaece para fora
+    const nw = f.toLocal(E.n, E.w), se = f.toLocal(E.s, E.e), M = 9000;
+    const w = se.x - nw.x, d = se.z - nw.z;
+    const geo = new THREE.PlaneGeometry(w + 2 * M, d + 2 * M);
+    geo.rotateX(-Math.PI / 2);
+    this.shadow = new THREE.Mesh(geo, new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false,
+      uniforms: { uC: { value: new THREE.Vector2((nw.x + se.x) / 2, (nw.z + se.z) / 2) }, uHalf: { value: new THREE.Vector2(w / 2, d / 2) },
+        uFogNear: this.shared.uFogNear, uFogFar: this.shared.uFogFar },
+      vertexShader: /* glsl */ `varying vec3 vW; varying float vVD;
+        void main() { vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; vec4 mv = viewMatrix * w; vVD = -mv.z; gl_Position = projectionMatrix * mv; }`,
+      fragmentShader: /* glsl */ `uniform vec2 uC, uHalf; uniform float uFogNear, uFogFar; varying vec3 vW; varying float vVD;
+        void main() {
+          vec2 q = abs(vW.xz - uC) - uHalf;
+          float a = 0.55 * exp(-length(max(q, 0.0)) / 4500.0) * (1.0 - 0.6 * clamp((vVD - uFogNear) / (uFogFar - uFogNear), 0.0, 1.0));
+          gl_FragColor = vec4(0.02, 0.03, 0.025, a);
+        }`,
+    }));
+    geo.translate((nw.x + se.x) / 2, 0, (nw.z + se.z) / 2);
+    this.shadow.position.y = this.#bottom - 4;
+    this.shadow.renderOrder = -1;
+    this.group.add(this.shadow);
+  }
+
   #buildWall() {
     if (!this.clipRing) return;
     if (this.wall) { this.wall.geometry.dispose(); this.group.remove(this.wall); }
-    const f = this.frame, hf = this.hf, bottom = this.baseElev - 120;
-    const pts = [];
-    const ring = this.clipRing;
-    for (let k = 0; k < ring.length - 1; k++) {
-      const [la, oa] = ring[k], [lb, ob] = ring[k + 1];
-      const a = f.toLocal(la, oa), b = f.toLocal(lb, ob);
-      const n = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.z - a.z) / 25));
-      for (let s = 0; s < n; s++) { const t = s / n; pts.push([la + (lb - la) * t, oa + (ob - oa) * t]); }
-    }
-    pts.push(ring[ring.length - 1]);
-    const pos = new Float32Array(pts.length * 2 * 3);
-    pts.forEach(([lat, lon], k) => {
-      const p = f.toLocal(lat, lon), y = hf.elevation(lat, lon);
-      pos.set([p.x, y, p.z, p.x, bottom, p.z], k * 6);
-    });
-    const idx = [];
-    for (let k = 0; k < pts.length - 1; k++) { const a = k * 2, b = a + 2; idx.push(a, a + 1, b, b, a + 1, b + 1); }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    g.setIndex(idx);
-    g.computeVertexNormals();
-    this.wallMaterial ??= new THREE.MeshLambertMaterial({ color: 0x8b7b64, side: THREE.DoubleSide });
-    this.wall = new THREE.Mesh(g, this.wallMaterial);
+    this.wall = new THREE.Mesh(this.#wallGeometry([{ pts: this.clipRing }]), this.#baseMat());
+    this.wall.frustumCulled = false;
     this.wall.visible = this.shared.uClip.value > 0.5;
     this.group.add(this.wall);
   }
@@ -568,7 +707,13 @@ export class CellTerrain {
   setClip(on) {
     this.shared.uClip.value = on && this.maskData ? 1 : 0;
     if (this.wall) this.wall.visible = !!on;
+    if (this.base) { this.base.visible = !on; this.shadow.visible = !on; }
   }
+
+  /** sombras de nuvens no chão (0–1) */
+  setClouds(v) { this.shared.uClouds.value = v; }
+  /** clarão rápido dentro da propriedade recém-escolhida */
+  flashSelection() { this.flashAt = performance.now(); }
   get clipped() { return this.shared.uClip.value > 0.5; }
 
   // --- texturas temáticas e luz ------------------------------------------------
@@ -745,6 +890,10 @@ export class CellTerrain {
     this.shared.uExag.value = v;
     this.group.scale.y = v;
     this.group.position.y = -this.baseElev * v;
+    if (this.baseMaterial) {   // pé da maquete na cena (o grupo é escalado na altura)
+      const u = this.baseMaterial.uniforms;
+      u.uBotY.value = (this.#bottom - this.baseElev) * v; u.uBaseH.value = 160 * v;
+    }
   }
   sceneY(elev) { return (elev - this.baseElev) * this.exaggeration; }
   elevFromSceneY(y) { return y / this.exaggeration + this.baseElev; }

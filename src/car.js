@@ -97,6 +97,20 @@ export const CRITERIA = {
   },
 };
 
+// ícones dos cartões do resumo (traço, 24 × 24)
+const RS_ICON = {
+  'Uso hoje': 'M5 19c0-8 6-14 14-14 0 8-6 14-14 14Z M5 19l7-7',
+  'Vigor do pasto': 'M12 20v-8 M12 12c0-4-3-6-7-6 0 4 3 6 7 6Z M12 10c0-3 2-5 6-5 0 3-2 5-6 5Z',
+  'Água': 'M12 3c3.5 4.6 6 8 6 11a6 6 0 0 1-12 0c0-3 2.5-6.4 6-11Z',
+  'Relevo': 'M3 19 9 9l4 6 2-3 6 7Z',
+  'Sol e geada': 'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z M12 2v2 M12 20v2 M4.9 4.9l1.4 1.4 M17.7 17.7l1.4 1.4 M2 12h2 M20 12h2 M4.9 19.1l1.4-1.4 M17.7 6.3l1.4-1.4',
+  'Clima': 'M7 15a4 4 0 1 1 .8-7.9A5 5 0 0 1 17.5 9 3.5 3.5 0 0 1 17 15Z M9 18l-1 2 M13 18l-1 2 M17 18l-1 2',
+  'Solo provável': 'M3 7h18 M3 12h18 M3 17h18 M7 7v5 M15 12v5 M10 17v4',
+  'Acesso': 'M8 3 5 21 M16 3l3 18 M12 5v3 M12 11v3 M12 17v3',
+  'Vizinhos': 'M4 21V8l2-3 2 3v13 M16 21V8l2-3 2 3v13 M4 11h16 M4 17h16',
+  'Desde 1985': 'M3 12a9 9 0 1 0 3-6.7 M3 4v5h5 M12 7v5l3 2',
+  'Quando plantar com menos risco (ZARC)': 'M4 6h16v14H4Z M4 10h16 M8 3v4 M16 3v4 M8 14h3 M13 14h3',
+};
 const VIG_LV = [['fraco', '#b5651d'], ['abaixo da média', '#c9a03a'], ['acima da média', '#6fa84a'], ['forte', '#2f8a3c']];
 const ndvi = (v, nf) => nf(v / 100, 2);
 
@@ -158,15 +172,19 @@ export class CarLayer {
     scene.add(this.marker);
     // cerca 3D da propriedade escolhida: parede clara que some para cima, com mourões e arame no topo
     this.fenceMat = new THREE.ShaderMaterial({
-      uniforms: { uColor: { value: new THREE.Color(0xfff4dc) }, uOpacity: { value: 0 }, uPost: { value: 40 } },
+      uniforms: { uColor: { value: new THREE.Color(0xfff4dc) }, uOpacity: { value: 0 }, uPost: { value: 40 }, uTime: { value: 0 }, uLen: { value: 1000 } },
       vertexShader: /* glsl */ `attribute float h, d; varying float vH, vD;
         void main() { vH = h; vD = d; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-      fragmentShader: /* glsl */ `uniform vec3 uColor; uniform float uOpacity, uPost; varying float vH, vD;
+      fragmentShader: /* glsl */ `uniform vec3 uColor; uniform float uOpacity, uPost, uTime, uLen; varying float vH, vD;
         void main() {
           float wall = 0.07 + 0.45 * pow(1.0 - vH, 2.2);
           float post = 1.0 - smoothstep(0.0, 1.5 * fwidth(vD / uPost), abs(fract(vD / uPost + 0.5) - 0.5) - 0.012);
           float rail = smoothstep(0.93, 0.97, vH);
-          gl_FragColor = vec4(uColor, uOpacity * clamp(wall + 0.55 * post + 0.6 * rail, 0.0, 0.9));
+          // duas luzes correndo pelo arame, uma volta a cada ~9 s
+          float u = fract(vD / uLen - uTime / 9.0);
+          float run = pow(max(0.0, 1.0 - min(min(u, 1.0 - u), abs(u - 0.5)) * 14.0), 3.0);
+          vec3 c = mix(uColor, vec3(1.0, 0.82, 0.45), run * 0.8);
+          gl_FragColor = vec4(c, uOpacity * clamp(wall + 0.55 * post + (0.6 + 0.4 * run) * rail + 0.25 * run * (1.0 - vH), 0.0, 0.95));
         }`,
       transparent: true, depthWrite: false, side: THREE.DoubleSide,
     });
@@ -278,6 +296,7 @@ export class CarLayer {
     this.onSelect?.(x);
     if (!x) { this.vectors.removeLines('car-sel'); this.vectors.removeLines('car-nb'); this.nb = []; this.marker.visible = false; return; }
     this.terrain.setCarSelection(x.f.rings);
+    this.terrain.flashSelection?.();
     this.vectors.addLines('car-sel', 'highlight', { color: 0xffffff, width: 3.5, lift: 6, opacity: 1, order: 6, noClip: true }, x.f.rings, 20);
     this.nb = this.neighbors(x);
     // vizinhos: tracejado claro (as cores do critério são linhas cheias)
@@ -290,6 +309,7 @@ export class CarLayer {
 
   // transição do apagado (~¼ s); a máscara e a cerca só saem depois que o mapa voltou ao normal
   animate(dt) {
+    this.fenceMat.uniforms.uTime.value = (performance.now() / 1000) % 100000;
     if (this.dim === this.dimTo) return;
     this.dim = this.dimTo > this.dim ? Math.min(this.dimTo, this.dim + dt * 4) : Math.max(this.dimTo, this.dim - dt * 4);
     this.terrain.setCarState({ dim: this.dim });
@@ -330,6 +350,7 @@ export class CarLayer {
     this.fence.geometry.dispose();
     this.fence.geometry = g;
     this.fenceMat.uniforms.uPost.value = Math.max(25, hgt * 1.6);
+    this.fenceMat.uniforms.uLen.value = Math.max(200, dd.reduce((a, b) => Math.max(a, b), 0));
     this.fence.visible = true;
   }
 
@@ -449,6 +470,7 @@ export class CarLayer {
       el.textContent = `${this.nf(f.ha, f.ha < 10 ? 1 : 0)} ha`;
       el.hidden = false;
       el.classList.toggle('is-dim', !!this.sel && this.sel.f !== f && !this.nb.some((n) => n.x.f === f));
+      el.classList.toggle('is-sel', !!this.sel && this.sel.f === f);
       return { el, f, pos: new THREE.Vector3(p.x, t.groundY(p.x, p.z) + 8, p.z) };
     });
     for (let i = take.length; i < this.labelPool.length; i++) this.labelPool[i].hidden = true;
@@ -577,8 +599,8 @@ export class CarLayer {
   // resumo: um cartão por parte da ficha (os de clima, solo, acesso e plantio são preenchidos em main.js)
   #summary(x) {
     const f = x.f, s = f.s, nf = this.nf, esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
-    const tile = (goto, c, k, body, cls = '') => `<button type="button" class="rs${cls}" data-goto="${goto}"><span class="k"><i style="--c:${c}"></i>${k}</span>${body}</button>`;
-    const wait = (id) => `<div class="rs-b" id="${id}"><span class="d">Carregando…</span></div>`;
+    const tile = (goto, c, k, body, cls = '') => `<button type="button" class="rs${cls}" data-goto="${goto}"><span class="k"><i class="ic" style="--c:${c}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${RS_ICON[k] ?? RS_ICON.Clima}"/></svg></i>${k}</span>${body}</button>`;
+    const wait = (id) => `<div class="rs-b" id="${id}" aria-busy="true"><span class="skel skel--v"></span><span class="skel"></span></div>`;
     const lu = s.lu.map(([c, p]) => [CLASSES[c]?.[0] ?? `classe ${c}`, CLASSES[c]?.[1] ?? '#999', p]);
     const bar = `<div class="cc-bar">${lu.map(([n, c, p]) => `<span style="flex:${p} 1 0;background:${c}" title="${esc(n)}: ${nf(p, 1)}%"></span>`).join('')}</div>`;
     let t = '';

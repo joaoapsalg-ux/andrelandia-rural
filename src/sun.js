@@ -69,18 +69,29 @@ export class SkyDome {
     this.uniforms = {
       uZenith: { value: new THREE.Color('#5b8fc9') }, uHorizon: { value: new THREE.Color('#d3e2ec') },
       uSunDir: { value: new THREE.Vector3(0, 1, 0) }, uSunCol: { value: new THREE.Color('#fff4e4') }, uSunUp: { value: 1 },
+      uCloudTex: { value: null }, uClouds: { value: 0 }, uTime: { value: 0 },
     };
     this.mesh = new THREE.Mesh(new THREE.SphereGeometry(140000, 32, 16), new THREE.ShaderMaterial({
       uniforms: this.uniforms, side: THREE.BackSide, depthWrite: false, fog: false,
       vertexShader: /* glsl */ `varying vec3 vDir;
         void main() { vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-      fragmentShader: /* glsl */ `uniform vec3 uZenith, uHorizon, uSunDir, uSunCol; uniform float uSunUp; varying vec3 vDir;
+      fragmentShader: /* glsl */ `uniform vec3 uZenith, uHorizon, uSunDir, uSunCol; uniform float uSunUp, uClouds, uTime; uniform sampler2D uCloudTex; varying vec3 vDir;
         void main() {
           vec3 d = normalize(vDir);
           float h = clamp(d.y, 0.0, 1.0);
           vec3 col = mix(uHorizon, uZenith, pow(h, 0.55));
           col = mix(col, uHorizon * 1.04, (1.0 - smoothstep(0.0, 0.06, h)) * 0.6);   // faixa clara no horizonte
+          // abaixo do horizonte (visto de cima, em volta da maquete): névoa um pouco mais escura, dá fundo ao mapa
+          col = mix(col, uHorizon * vec3(0.74, 0.77, 0.80), smoothstep(0.0, -0.5, d.y) * 0.85);
           float s = max(dot(d, normalize(uSunDir)), 0.0);
+          if (uClouds > 0.0 && d.y > 0.0) {   // nuvens: o mesmo ruído das sombras no chão, numa camada plana no alto
+            vec2 p = d.xz / (d.y + 0.12) * 0.32 + vec2(uTime * 0.0035, uTime * 0.0012);
+            float c = texture2D(uCloudTex, p).r * 0.65 + texture2D(uCloudTex, p * 2.6 + 0.31).r * 0.35;
+            float a = smoothstep(0.5, 0.8, c) * smoothstep(0.0, 0.22, d.y) * uClouds;
+            vec3 cc = mix(uHorizon, vec3(1.0), 0.6) * (0.35 + 0.65 * uSunUp) + uSunCol * pow(s, 6.0) * 0.35 * uSunUp;
+            cc *= 0.88 + 0.12 * smoothstep(0.55, 0.8, c);   // miolo mais claro
+            col = mix(col, cc, a * 0.8);
+          }
           col += uSunCol * (pow(s, 900.0) * 1.2 + pow(s, 24.0) * 0.22 + pow(s, 4.0) * 0.08) * uSunUp;
           gl_FragColor = vec4(col, 1.0);
         }`,
@@ -92,7 +103,8 @@ export class SkyDome {
     u.uZenith.value.copy(state.zenith); u.uHorizon.value.copy(state.horizon);
     u.uSunDir.value.copy(dir); u.uSunCol.value.copy(state.sunColor); u.uSunUp.value = Math.min(1, Math.max(0, (state.elevation + 3) / 6));
   }
-  follow(camera) { this.mesh.position.copy(camera.position); }
+  setClouds(tex, v) { this.uniforms.uCloudTex.value = tex; this.uniforms.uClouds.value = v; }
+  follow(camera) { this.mesh.position.copy(camera.position); this.uniforms.uTime.value = (performance.now() / 1000) % 100000; }
 }
 
 const DIRS = ['norte', 'nordeste', 'leste', 'sudeste', 'sul', 'sudoeste', 'oeste', 'noroeste'];

@@ -189,6 +189,7 @@
   .seg2 label + input + label { border-left: 1px solid var(--panel-line); }
   .seg2 input:checked + label { background: var(--accent); color: var(--panel); }
   .seg2 input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: -3px; }
+  .seg2--3 { grid-template-columns: repeat(3, 1fr); }
 
   /* propriedades: legenda */
   .car-crit { display: grid; gap: 3px; font-size: 12px; color: var(--ink-soft); }
@@ -286,9 +287,10 @@
   #readout .alt { color: var(--contour); font-weight: 500; }
 
   /* rótulos dos lugares e das propriedades sobre o mapa */
-  .poi { all: unset; position: absolute; left: 0; top: 0; pointer-events: auto; cursor: pointer; display: flex; align-items: center; gap: 5px; padding: 3px 7px 3px 5px; margin: -26px 0 0 -6px; background: var(--label-bg); border: 1px solid var(--panel-line); border-radius: 4px; font: 600 13px/1.1 var(--f-display); letter-spacing: .03em; white-space: nowrap; color: var(--ink); will-change: transform; }
-  .poi:hover, .poi:focus-visible { border-color: var(--accent); outline: none; }
-  .poi__glyph { color: var(--contour); font-size: 12px; }
+  .poi { all: unset; position: absolute; left: 0; top: 0; pointer-events: auto; cursor: pointer; display: flex; align-items: center; gap: 6px; padding: 3px 10px 3px 3px; margin: -28px 0 0 -12px; background: var(--label-bg); border: 1px solid color-mix(in srgb, var(--panel-line) 80%, transparent); border-radius: 999px; box-shadow: 0 2px 10px rgba(0,0,0,.22); font: 600 13px/1.1 var(--f-display); letter-spacing: .03em; white-space: nowrap; color: var(--ink); will-change: transform; transition: border-color .15s, box-shadow .15s; }
+  .poi:hover, .poi:focus-visible { border-color: var(--accent); outline: none; box-shadow: 0 2px 14px rgba(0,0,0,.3), 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+  .poi__glyph { width: 19px; height: 19px; border-radius: 50%; display: grid; place-items: center; background: color-mix(in srgb, var(--contour) 22%, transparent); color: var(--contour); font-size: 11px; line-height: 1; }
+  .poi[data-kind="cidade"] .poi__glyph, .poi[data-kind="vila"] .poi__glyph { background: var(--accent); color: var(--panel); }
   .poi[data-kind="cidade"] .poi__name { text-transform: uppercase; letter-spacing: .1em; }
   .poi--aprox { border-style: dashed; }
   .poi--out { opacity: .75; font-style: italic; }
@@ -297,8 +299,10 @@
   .poi small { font: 11px var(--f-data); color: var(--ink-soft); }
   .car-tip { position: fixed; left: 0; top: 0; pointer-events: none; z-index: 5; background: var(--label-bg); border: 1px solid var(--panel-line); border-radius: 6px; padding: 4px 8px; font: 12px/1.4 var(--f-data); color: var(--ink); box-shadow: var(--shadow); white-space: nowrap; }
   .car-tip .lc-sw { vertical-align: -1px; }
-  .car-lbl { position: absolute; left: 0; top: 0; margin: -9px 0 0 -24px; min-width: 48px; text-align: center; font: 500 11px/1 var(--f-data); color: #1d2621; background: rgba(255, 252, 240, 0.82); border-radius: 3px; padding: 3px 4px; pointer-events: none; white-space: nowrap; will-change: transform; transition: opacity .25s; }
-  .car-lbl.is-dim { opacity: .35; }
+  /* área das propriedades: pílula escura discreta; a escolhida em dourado */
+  .car-lbl { position: absolute; left: 0; top: 0; margin: -10px 0 0 -26px; min-width: 52px; box-sizing: border-box; text-align: center; font: 600 11.5px/1 var(--f-display); letter-spacing: .05em; color: #f4f1e8; background: rgba(14, 19, 17, .62); border: 1px solid rgba(255, 255, 255, .14); border-radius: 999px; padding: 4px 7px 3px; box-shadow: 0 1px 6px rgba(0,0,0,.3); pointer-events: none; white-space: nowrap; will-change: transform; transition: opacity .25s; }
+  .car-lbl.is-dim { opacity: .3; }
+  .car-lbl.is-sel { font-size: 14px; padding: 5px 10px 4px; margin: -13px 0 0 -34px; min-width: 68px; color: #1d1608; background: var(--gold); border-color: rgba(255,255,255,.5); box-shadow: 0 2px 14px rgba(0,0,0,.4), 0 0 0 4px color-mix(in srgb, var(--gold) 30%, transparent); z-index: 2; }
 
   /* aviso da ferramenta ativa, ano grande, antes e depois */
   #tool-hint { top: calc(16px + env(safe-area-inset-top, 0px)); transform: translateX(-50%); padding: 7px 8px 7px 14px; display: flex; gap: 10px; align-items: center; font-size: 14px; max-width: calc(100vw - var(--side-w) - 32px); box-sizing: border-box; border-radius: 999px; z-index: 4; }
@@ -380,7 +384,13 @@
   .rs:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .rs--wide { grid-column: 1 / -1; }
   .rs .k { display: flex; align-items: center; gap: 6px; font: 600 10.5px/1 var(--f-display); letter-spacing: .13em; text-transform: uppercase; color: var(--ink-soft); }
-  .rs .k i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 22%, transparent); }
+  .rs .k i.ic { flex: 0 0 auto; width: 22px; height: 22px; border-radius: 7px; display: grid; place-items: center; background: color-mix(in srgb, var(--c) 20%, transparent); color: var(--c); }
+  .rs .k i.ic svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .rs:hover .k i.ic { background: var(--c); color: var(--panel); }
+  /* carregando: barras com brilho passando */
+  .skel { display: block; height: 10px; width: 85%; border-radius: 5px; background: linear-gradient(90deg, color-mix(in srgb, var(--ink) 7%, transparent) 25%, color-mix(in srgb, var(--ink) 15%, transparent) 50%, color-mix(in srgb, var(--ink) 7%, transparent) 75%) 0 0 / 300% 100%; animation: skel 1.3s linear infinite; }
+  .skel--v { height: 20px; width: 60%; margin-bottom: 2px; }
+  @keyframes skel { from { background-position: 100% 0; } to { background-position: -50% 0; } }
   .rs-b { display: grid; gap: 4px; min-width: 0; }
   .rs .cc-list { font-size: 12.5px; }
   .rs .v { font: 700 25px/1.02 var(--f-display); letter-spacing: .01em; overflow-wrap: anywhere; }
@@ -448,7 +458,12 @@
   #status { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; font: 600 15px var(--f-display); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-soft); padding: 16px; text-align: center;
     background: radial-gradient(ellipse at 50% 120%, color-mix(in srgb, var(--contour) 28%, var(--sky)) 0%, var(--sky) 62%); transition: opacity .8s ease; }
   #status.is-out { opacity: 0; pointer-events: none; }
-  .splash { display: grid; justify-items: center; gap: 8px; width: min(420px, 100%); }
+  .splash { position: relative; display: grid; justify-items: center; gap: 8px; width: min(420px, 100%); }
+  /* curvas de nível se desenhando atrás do título */
+  .splash-topo { position: absolute; inset: 0; width: 100%; height: 100%; stroke: var(--contour); stroke-width: 1.2; opacity: .55; }
+  .splash-topo path { stroke-dasharray: 1400; stroke-dashoffset: 1400; animation: topo-draw 2.6s cubic-bezier(.4, 0, .2, 1) forwards; animation-delay: calc(var(--i) * .12s); }
+  @keyframes topo-draw { to { stroke-dashoffset: 0; } }
+  @media (prefers-reduced-motion: reduce) { .splash-topo path { animation: none; stroke-dashoffset: 0; } }
   .splash h1 { margin: 0; font: 700 clamp(40px, 9vw, 64px)/0.95 var(--f-display); letter-spacing: .02em; color: var(--ink); text-transform: uppercase; }
   .splash-sub { margin: 0 0 14px; font: 600 14px var(--f-display); letter-spacing: .12em; }
   .splash-bar { width: 100%; height: 3px; border-radius: 2px; background: color-mix(in srgb, var(--ink) 12%, transparent); overflow: hidden; }
@@ -499,7 +514,18 @@
 
 <div id="stage" aria-label="Modelo 3D do município de Andrelândia"></div>
 <div id="labels"></div>
-<div id="status" role="status"><div class="splash">
+<div id="status" role="status">
+<svg class="splash-topo" viewBox="0 0 800 500" preserveAspectRatio="xMidYMid slice" aria-hidden="true" fill="none">
+  <path style="--i:0" d="M-20 380c90-40 160-10 250-50s120-130 230-120 150 90 250 70 70-40 110-40"/>
+  <path style="--i:1" d="M-20 410c100-36 170-4 260-44s130-136 226-126 140 100 244 82 70-36 110-36"/>
+  <path style="--i:2" d="M-20 350c80-44 150-18 240-56s110-120 236-112 160 76 256 58 60-44 108-44"/>
+  <path style="--i:3" d="M-20 440c110-30 180 4 270-36s140-140 220-130 130 110 240 94 70-30 110-30"/>
+  <path style="--i:4" d="M-20 318c70-48 140-26 230-62s100-110 240-104 170 62 262 46 52-48 108-48"/>
+  <path style="--i:5" d="M330 250c20-30 70-44 110-36s56 40 30 60-80 26-110 14-44-14-30-38z"/>
+  <path style="--i:6" d="M362 246c10-16 36-24 58-20s30 22 16 32-42 14-58 8-24-8-16-20z"/>
+  <path style="--i:7" d="M-20 286c60-50 130-34 220-68s90-100 244-96 180 48 268 34 46-52 108-52"/>
+</svg>
+<div class="splash">
   <span class="eyebrow">Andrelândia · Minas Gerais</span>
   <h1>Andrelândia Rural</h1>
   <p class="splash-sub">a terra, a água e o sol em 3D</p>
@@ -659,6 +685,16 @@
             <input type="range" id="exag" min="1" max="4" step="0.1" value="1.5">
           </label>
           <label class="row" for="t-shadows"><span>Sombras dos morros <small class="dim">(pesado no celular)</small></span> <input type="checkbox" id="t-shadows"></label>
+        </fieldset>
+
+        <fieldset class="group checks">
+          <legend>Aparência</legend>
+          <div class="seg2 seg2--3" role="radiogroup" aria-label="Tema">
+            <input type="radio" name="theme" id="th-auto" value="auto" checked><label for="th-auto">Automático</label>
+            <input type="radio" name="theme" id="th-light" value="light"><label for="th-light">Claro</label>
+            <input type="radio" name="theme" id="th-dark" value="dark"><label for="th-dark">Escuro</label>
+          </div>
+          <label class="row" for="t-clouds"><span>Nuvens <small class="dim">(no céu e a sombra no chão)</small></span> <input type="checkbox" id="t-clouds"></label>
           <label class="row" for="t-film"><span>Acabamento de cinema <small class="dim">(cor e vinheta)</small></span> <input type="checkbox" id="t-film"></label>
         </fieldset>
       </section>

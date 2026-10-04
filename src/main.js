@@ -324,6 +324,24 @@ async function start() {
   filmBox.checked = (store.get('film') ?? '1') === '1';
   applyFilm();
   filmBox.addEventListener('change', () => { applyFilm(); store.set('film', filmBox.checked ? '1' : '0'); });
+  // nuvens: no céu e a sombra delas passando no chão (ligadas por padrão; custo pequeno, duas leituras de textura)
+  const cloudBox = $('#t-clouds');
+  const applyClouds = () => { const v = cloudBox.checked ? 1 : 0; terrain.setClouds(v); sky.setClouds(terrain.cloudTex, v); };
+  cloudBox.checked = (store.get('clouds') ?? '1') === '1';
+  applyClouds();
+  cloudBox.addEventListener('change', () => { applyClouds(); store.set('clouds', cloudBox.checked ? '1' : '0'); });
+  // tema: automático (do aparelho), claro ou escuro
+  function setTheme(t) {
+    if (t === 'auto') delete root.dataset.theme; else root.dataset.theme = t;
+    store.set('theme', t);
+    applyTheme();
+  }
+  {
+    const t = ['light', 'dark'].includes(store.get('theme')) ? store.get('theme') : 'auto';
+    $(`#th-${t}`).checked = true;
+    if (t !== 'auto') setTheme(t);
+    document.querySelectorAll('input[name="theme"]').forEach((r) => r.addEventListener('change', () => { if (r.checked) setTheme(r.value); }));
+  }
   applySun();
 
   // --- uso do solo: máquina do tempo -------------------------------------------------
@@ -634,6 +652,25 @@ async function start() {
     renderCard(x);
     openPanel('car');
     paneBody.scrollTop = 0;
+    countUp($('#car-card-body'));
+  }
+  // os números grandes da ficha contam de zero até o valor ao abrir (formato brasileiro: 1.315 · 3,8)
+  function countUp(box) {
+    if (reduceMotion.matches) return;
+    for (const el of box.querySelectorAll('.cc-head h2, .rs .v, .big')) {
+      const tn = [...el.childNodes].find((n) => n.nodeType === 3 && /\d/.test(n.textContent));
+      const m = tn?.textContent.match(/\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d+(?:,\d+)?/);
+      if (!m) continue;
+      const s = m[0], dec = (s.split(',')[1] ?? '').length, val = parseFloat(s.replace(/\./g, '').replace(',', '.'));
+      if (!(val > 0)) continue;
+      const pre = tn.textContent.slice(0, m.index), post = tn.textContent.slice(m.index + s.length), t0 = performance.now();
+      const step = (now) => {
+        const k = Math.min(1, (now - t0) / 700), e = 1 - (1 - k) ** 3;
+        tn.textContent = pre + nf(val * e, dec) + post;
+        if (k < 1 && tn.isConnected) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    }
   }
   function closeCarCard() { showCard(false); carLayer.select(null); layout(); }
   $('#car-card-close').addEventListener('click', closeCarCard);
@@ -714,6 +751,7 @@ async function start() {
     if (!box || carLayer.sel !== x) return;
     const r = roads.route(x), t = accessText(r, nf);
     const rs = $('#rs-acesso');
+    rs?.removeAttribute('aria-busy');
     if (rs) rs.innerHTML = !r?.city ? '<span class="d">Sem caminho pelas estradas do mapa.</span>'
       : `<span class="v">${t.km(r.city.m)} <small>até o centro</small></span><span class="d">${!r.asphalt ? '' : r.asphalt.m < 100 ? 'Asfalto passa na propriedade' : `Asfalto a ${t.km(r.asphalt.m)}`}${r.city.dirt >= 50 ? ` · ${t.km(r.city.dirt)} de terra até o centro` : ''}</span>`;
     box.innerHTML = !r ? `<p class="cc-kv">${t.city}.</p>`
@@ -752,6 +790,7 @@ async function start() {
     const { climate: c, soil: s } = agro.of(x), t = agroText(c, s, nf);
     // cartões do resumo
     const rsC = $('#rs-clima'), rsS = $('#rs-solo'), rsZ = $('#rs-zarc');
+    [rsC, rsS, rsZ].forEach((e) => e?.removeAttribute('aria-busy'));
     if (rsC) rsC.innerHTML = `<span class="v">${nf(c.year)} <small>mm de chuva/ano</small></span><span class="d">${t.dry[0].toUpperCase() + t.dry.slice(1)}</span>`;
     if (rsS) rsS.innerHTML = !s ? '<span class="d">Sem dado de solo aqui.</span>'
       : `<span class="v">${s.tipoName[0].toUpperCase() + s.tipoName.slice(1)}</span><span class="d">${s.cls ? `${s.cls} · ` : ''}argila ${nf(s.clay)}% · pH ${nf(s.ph, 1)}</span>`;
