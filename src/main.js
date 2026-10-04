@@ -448,8 +448,11 @@ async function start() {
     aguas: 'O quanto a vegetação estava verde nas águas de 2026 (jan–abr), pela Sentinel-2 (10 m). Pasto bem formado fica verde; o que segue marrom nas águas pode ser pasto fraco, solo exposto ou roçado. Mata fica sempre verde-escura.',
     seca: 'O verde que sobrou na seca de 2026 (jul–set). Pasto seca e fica marrom — é normal; o que segura o verde costuma ser baixada úmida, capineira, irrigação, eucalipto ou mata.',
   };
+  // faixa da rampa por estação: nas águas quase tudo fica entre 0,65 e 0,85 — a rampa abre ali para separar pasto fraco e forte
+  const VIG_RANGE = { aguas: [0.45, 0.9], seca: [0.2, 0.8] };
   function loadVigor(season) {
     $('#vig-note').textContent = VIG_NOTE[season];
+    $('#vig-min').textContent = nf(VIG_RANGE[season][0], 2); $('#vig-max').textContent = nf(VIG_RANGE[season][1], 2);
     if (VIG.key === season) return VIG.p;
     VIG.key = season;
     $('#vig-state').textContent = 'Carregando o mapa de vigor…';
@@ -459,7 +462,7 @@ async function start() {
     }).then((t) => {
       if (VIG.key !== season) { t.dispose(); return VIG.p; }   // trocaram de estação enquanto carregava
       VIG.tex?.dispose(); VIG.tex = t;
-      terrain.setVigorTexture(t);
+      terrain.setVigorTexture(t, VIG_RANGE[season]);
       $('#vig-state').textContent = '';
       return t;
     }).catch(() => { VIG.key = null; $('#vig-state').textContent = 'O mapa de vigor ainda não está disponível.'; return null; });

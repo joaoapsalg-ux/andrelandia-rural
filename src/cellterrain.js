@@ -71,6 +71,7 @@ const FRAG = /* glsl */ `
   // vigor (NDVI da Sentinel-2, grade da extensão ~15 m): 0 = sem dado; NDVI = (v − 1) / 254 − 0,1
   uniform sampler2D uNdvi;
   uniform float uVig;
+  uniform vec2 uVigR;                // faixa de NDVI da rampa (muda com a estação)
 
   // rampa do vigor: marrom (pouco verde) → amarelo → verde → verde-escuro
   vec3 vigRamp(float t) {
@@ -157,9 +158,9 @@ const FRAG = /* glsl */ `
       float kwh = (sol < 1.5 ? sg.r : sg.g) * 255.0 / 25.0;
       base = solRamp(clamp((kwh - uSolR.x) / (uSolR.y - uSolR.x), 0.0, 1.0));
     }
-    if (vig > 0.5) {   // faixa de NDVI 0,15–0,85 na rampa; sem dado = cinza
+    if (vig > 0.5) {   // sem dado = cinza
       float nb = texture2D(uNdvi, ovUv).r * 255.0;
-      base = nb < 0.5 ? vec3(0.55) : vigRamp(clamp(((nb - 1.0) / 254.0 - 0.1 - 0.15) / 0.7, 0.0, 1.0));
+      base = nb < 0.5 ? vec3(0.55) : vigRamp(clamp(((nb - 1.0) / 254.0 - 0.1 - uVigR.x) / (uVigR.y - uVigR.x), 0.0, 1.0));
     }
     vec3 col = base * mix(vec3(1.0), light * 1.05, sol > 0.5 ? 0.35 : 1.0);
     // imagem de satélite: já traz sombras do horário da foto; aplica a luz pela metade + sombra projetada
@@ -298,7 +299,7 @@ export class CellTerrain {
       uUpMask: { value: blank }, uUpRect: { value: new THREE.Vector4(0, 0, 1, 1) }, uUpOn: { value: 0 },
       uRel: { value: blank }, uRelX: { value: new THREE.Vector4(1, 0, 1, 0) }, uRelief: { value: 0 }, uFilm: { value: 0 },
       uSharp: { value: 0 }, uClarity: { value: 0 }, uTexel: { value: 1 / 1024 },
-      uNdvi: { value: blank }, uVig: { value: 0 },
+      uNdvi: { value: blank }, uVig: { value: 0 }, uVigR: { value: new THREE.Vector2(0.45, 0.9) },
     };
     {
       const nw = frame.toLocal(EXTENT.n, EXTENT.w), se = frame.toLocal(EXTENT.s, EXTENT.e);
@@ -596,7 +597,7 @@ export class CellTerrain {
   setBeforeTexture(tex) { this.shared.uLcA.value = this.#nearest(tex); }
   setSplit(px) { this.shared.uSplit.value = px; }
   setSolTexture(tex) { this.shared.uSolG.value = tex; }
-  setVigorTexture(tex) { this.shared.uNdvi.value = tex ?? this.blank; }
+  setVigorTexture(tex, range) { this.shared.uNdvi.value = tex ?? this.blank; if (range) this.shared.uVigR.value.set(range[0], range[1]); }
   // imóveis do CAR: textura de identificação (cobre a extensão), paleta 64×64 por índice e estado
   setCarTexture(tex) {
     tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter; tex.generateMipmaps = false;

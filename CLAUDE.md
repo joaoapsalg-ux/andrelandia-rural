@@ -102,7 +102,11 @@ O app aplica 35% da nitidez do shader nos blocos de 2 m (`uTileSharp`), que já 
 Robôs do GitHub Actions (rodam pelo botão "Run workflow" ou `gh workflow run <arquivo>`; gravam no repositório e
 publicam o site): `imagem-2m-municipio.yml` (células de `tools/municipio_celulas.txt`), `vigor.yml`
 (`tools/build_vigor.py`: STAC do Earth Search, máscara de nuvem pela SCL, 2026 a 10 m e 2019–2025 na visão de 20 m)
-e `imagem-2m.yml` (testes: devolve as imagens como artefato, não publica).
+e `imagem-2m.yml` (testes: devolve as imagens como artefato, não publica). O do vigor leva ~50 min (cada banda vem
+em centenas de pedidos pequenos ao S3; as threads não ganharam quase nada — próximo passo seria processos ou um job
+por ano); tem `teste = sim` (2 anos, 3 cenas, não publica). Não usar GDAL_HTTP_MULTIRANGE com o S3 (devolve o arquivo
+inteiro). As cenas do Earth Search já vêm sem o deslocamento de +1000 (conferido nos dados: 0 de 208 cenas).
+Rampa do vigor no shader: faixa por estação (`uVigR`: águas 0,45–0,90; seca 0,20–0,80).
 
 Dados acrescentados em 03/10/2026 sem Python (a máquina não tem): PowerShell + navegador do app.
 - Clima: Open-Meteo Historical Weather API (5 pontos, 1991–2020) → `andrelandia_clima_openmeteo.json` (ERA5-Land) e
