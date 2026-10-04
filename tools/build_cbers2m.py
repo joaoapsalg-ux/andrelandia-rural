@@ -73,6 +73,109 @@ def inspect_l4(cells):
                   f'compressão {ds.compression} overviews {ovr} · recorte de {len(cells.split(","))} células ≈ {tot / 1e6:.0f} MB (sem compressão)')
 
 
+def cog_url(key):
+    """'20260723_200_140' → endereço do COG fundido do INPE dessa data/órbita/ponto"""
+    d, orb, pt = key.split('_')
+    return (f'https://data.inpe.br/bdc/data/CB4A-WPM-PCA-FUSED/v001/{orb}/{pt}/{d[:4]}/{int(d[4:6])}/'
+            f'CBERS4A_WPM_PCA_RGB321_{key}.tif')
+
+
+def dehaze(img, strength):
+    """tira o véu de névoa (canal escuro): onde o mínimo das 3 cores é alto em toda a vizinhança, há névoa"""
+    from scipy.ndimage import minimum_filter
+    dc = minimum_filter(img.min(-1), size=15)
+    A = np.percentile(img.reshape(-1, 3)[dc.ravel() >= np.percentile(dc, 99.9)], 90, axis=0)   # luz da atmosfera
+    t = 1 - strength * gaussian_filter(dc, 8) / max(A.max(), 1)
+    t = np.clip(t, 0.45, 1)[..., None]
+    return (img - A) / t + A
+
+
+def read_rgb(ds, X, Y, order):
+    win = from_bounds(X.min() - 40, Y.min() - 40, X.max() + 40, Y.max() + 40, ds.transform).round_offsets().round_lengths()
+    src = ds.read([1, 2, 3], window=win, boundless=True, fill_value=0).astype(np.float32)
+    wt = ds.window_transform(win)
+    rows, cols = (Y - wt.f) / wt.e - 0.5, (X - wt.c) / wt.a - 0.5
+    return np.stack([map_coordinates(src[k], [rows, cols], order=order, mode='nearest', prefilter=order > 1) for k in range(3)], -1)
+
+
+def register(ref, img):
+    """deslocamento (dy, dx) de img em relação a ref, com fração de pixel (correlação de fase no detalhe)"""
+    hp = lambda a: a - gaussian_filter(a, 4)
+    F = np.fft.fft2(hp(ref)) * np.conj(np.fft.fft2(hp(img)))
+    cc = np.fft.ifft2(F / np.maximum(np.abs(F), 1e-6)).real
+    py, px = np.unravel_index(np.argmax(cc), cc.shape)
+    # refino parabólico nos dois eixos
+    h, w = cc.shape
+    y0, y1, y2 = cc[(py - 1) % h, px], cc[py, px], cc[(py + 1) % h, px]
+    x0, x1, x2 = cc[py, (px - 1) % w], cc[py, px], cc[py, (px + 1) % w]
+    dy = py + 0.5 * (y0 - y2) / (y0 - 2 * y1 + y2 + 1e-9)
+    dx = px + 0.5 * (x0 - x2) / (x0 - 2 * x1 + x2 + 1e-9)
+    if dy > h / 2: dy -= h
+    if dx > w / 2: dx -= w
+    return dy, dx
+
+
+def run_sheet(a):
+    """folha de prova: o recorte da propriedade (--bbox w,s,e,n) em cada data, lado a lado, com a data escrita"""
+    from PIL import ImageDraw
+    w, s, e, n = map(float, a.bbox.split(','))
+    keys = a.dates.split(',')
+    tw = 360; th = int(tw * (n - s) / ((e - w) * np.cos(np.radians((n + s) / 2))))
+    cols = 4; sheet = Image.new('RGB', (cols * tw, ((len(keys) + cols - 1) // cols) * (th + 22)), (17, 17, 17))
+    dr = ImageDraw.Draw(sheet)
+    for i, key in enumerate(keys):
+        t0 = time.time()
+        with rasterio.open(cog_url(key)) as ds:
+            lon = w + (np.arange(tw * 2) + 0.5) * (e - w) / (tw * 2); lat = n - (np.arange(th * 2) + 0.5) * (n - s) / (th * 2)
+            LON, LAT = np.meshgrid(lon, lat)
+            X, Y = transform('EPSG:4326', ds.crs, LON.ravel().tolist(), LAT.ravel().tolist())
+            img = read_rgb(ds, np.array(X).reshape(LON.shape), np.array(Y).reshape(LON.shape), 1)
+        lo, hi = np.percentile(img[img.sum(-1) > 0], [1, 99]) if (img.sum(-1) > 0).any() else (0, 255)
+        img = np.clip((img - lo) / max(hi - lo, 1) * 255, 0, 255).astype(np.uint8)
+        x, y = (i % cols) * tw, (i // cols) * (th + 22)
+        sheet.paste(Image.fromarray(img).resize((tw, th), Image.LANCZOS), (x, y + 22))
+        dr.text((x + 6, y + 5), f'{key[6:8]}/{key[4:6]}/{key[:4]}  órbita {key[9:]}', fill=(255, 255, 255))
+        print(f'{key}: {time.time() - t0:.1f} s')
+    os.makedirs(a.out, exist_ok=True)
+    sheet.save(os.path.join(a.out, 'folha_de_prova.jpg'), quality=90)
+
+
+def run_stack(a, sk):
+    """várias datas empilhadas: alinha cada uma à primeira, iguala as cores e tira a mediana pixel a pixel"""
+    keys = a.dates.split(',')
+    dss = [rasterio.open(cog_url(k)) for k in keys]
+    for cell in a.cells.split(','):
+        r, c = map(int, cell.split('_'))
+        t0 = time.time()
+        LON, LAT = cell_grid(r, c)
+        X, Y = transform('EPSG:4326', dss[0].crs, LON.ravel().tolist(), LAT.ravel().tolist())
+        X = np.array(X).reshape(TS, TS); Y = np.array(Y).reshape(TS, TS)
+        imgs = [read_rgb(ds, X, Y, a.order) for ds in dss]
+        ref = imgs[0]; refL = lum(ref); valid = ref.sum(-1) > 0
+        stack, shifts = [], []
+        for img in imgs:
+            v = img.sum(-1) > 0
+            if v.mean() < 0.5: continue
+            if img is not ref:
+                dy, dx = register(refL, lum(img))
+                shifts.append(f'{dy:+.2f},{dx:+.2f}')
+                yy, xx = np.mgrid[0:TS, 0:TS].astype(np.float32)
+                img = np.stack([map_coordinates(img[..., k], [yy - dy, xx - dx], order=3, mode='nearest') for k in range(3)], -1)
+            m = valid & (img.sum(-1) > 0)
+            for k in range(3):   # cores de cada data iguais às da primeira
+                img[..., k] = (img[..., k] - img[..., k][m].mean()) / max(img[..., k][m].std(), 1e-3) * ref[..., k][m].std() + ref[..., k][m].mean()
+            stack.append(img)
+        med = np.median(np.stack(stack), 0)
+        if a.dehaze: med = dehaze(med, a.dehaze)
+        out = match_to_base(med, base_tile(r, c), valid, sk)
+        if a.clarity: out = out + a.clarity * (out - np.stack([gaussian_filter(out[..., j], 6 * sk) for j in range(3)], -1))
+        if a.unsharp: out = out + a.unsharp * (out - np.stack([gaussian_filter(out[..., j], 0.9 * sk) for j in range(3)], -1))
+        name = f'c_{r}_{c}{a.tag}.jpg'
+        Image.fromarray(np.clip(out, 0, 255).astype(np.uint8)).save(os.path.join(a.out, name), quality=a.quality, optimize=True, progressive=True)
+        print(f'{name}: {len(stack)} datas, deslocamentos (px) {" ".join(shifts)}, {time.time() - t0:.1f} s')
+    for ds in dss: ds.close()
+
+
 def sample_window(ds, band, X, Y, order):
     """lê de ds a janela que cobre as coordenadas (X, Y) e amostra a banda nelas"""
     win = from_bounds(X.min() - 40, Y.min() - 40, X.max() + 40, Y.max() + 40, ds.transform).round_offsets().round_lengths()
@@ -126,7 +229,12 @@ def main():
     ap.add_argument('--out', default='data/muni/img/town')
     ap.add_argument('--gain', type=float, default=1.0, help='multiplica o ganho automático')
     ap.add_argument('--tag', default='')
-    ap.add_argument('--mode', default='puro', choices=['detalhe', 'puro', 'l4'], help='detalhe: cor atual + detalhe dos 2 m · puro: 2 m inteira, cor casada · l4: fusão própria das bandas originais')
+    ap.add_argument('--mode', default='puro', choices=['detalhe', 'puro', 'l4', 'sheet', 'stack'],
+                    help='detalhe · puro (2 m inteira, cor casada) · l4 (fusão própria) · sheet (folha de prova das datas) · stack (datas empilhadas; com 1 data = só a correção)')
+    ap.add_argument('--dates', default='20260723_200_140', help='datas "AAAAMMDD_órbita_ponto" separadas por vírgula (sheet/stack)')
+    ap.add_argument('--bbox', default='-44.2700,-21.6870,-44.2495,-21.6635', help='w,s,e,n da folha de prova')
+    ap.add_argument('--dehaze', type=float, default=0.0, help='correção de névoa (0 = nenhuma, ~0,6 típico)')
+    ap.add_argument('--clarity', type=float, default=0.0, help='contraste local (raio ~12 m)')
     ap.add_argument('--size', type=int, default=1024, help='lado do bloco em px (1024 ≈ 2 m, 2048 ≈ 1 m)')
     ap.add_argument('--order', type=int, default=1, help='interpolação ao reprojetar: 1 linear, 3 bicúbica')
     ap.add_argument('--unsharp', type=float, default=0.0, help='nitidez aplicada no arquivo (0 = nenhuma)')
@@ -141,6 +249,10 @@ def main():
     os.makedirs(a.out, exist_ok=True)
     if a.mode == 'l4':
         return run_l4(a, sk)
+    if a.mode == 'sheet':
+        return run_sheet(a)
+    if a.mode == 'stack':
+        return run_stack(a, sk)
     os.environ.setdefault('GDAL_DISABLE_READDIR_ON_OPEN', 'EMPTY_DIR')
     os.environ.setdefault('GDAL_HTTP_MULTIRANGE', 'YES')
     with rasterio.Env(), rasterio.open(COG) as ds:
