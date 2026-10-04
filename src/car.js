@@ -547,6 +547,8 @@ export class CarLayer {
     h += `<section data-tab="terra"><h3>Uso do solo hoje</h3>
       <div class="cc-bar" role="img" aria-label="Composição do uso do solo">${bar}</div>
       <ul class="cc-list">${list}</ul>
+      <div id="cc-lu10"></div>
+      <button type="button" class="btn btn--small" data-act="lu10">Comparar com o mapa de 10 m</button>
     </section>`;
     // relevo
     const pctSl = Math.tan((s.sl * Math.PI) / 180) * 100;

@@ -42,6 +42,8 @@ const FRAG = /* glsl */ `
   uniform float uClip;
   uniform vec4 uOvRect, uTileRect;   // (u0, v0, escala u, escala v) da célula em cada textura
   uniform vec4 uLcX, uHgtX;          // extensão (u, v) → textura: (escala u, desloc. u, escala v, desloc. v)
+  uniform vec4 uLcFX;                // idem para o uso do solo de 10 m (2025), que ocupa uLc/uLc2 quando uLcFine = 1
+  uniform float uLcFine;
   uniform float uTileMix;
   uniform float uMin, uMax, uHyps, uSat, uLand, uContours, uInterval, uDim;
   uniform vec3 uPaper, uInk, uFog;
@@ -153,8 +155,9 @@ const FRAG = /* glsl */ `
       if (before) {
         base = texture2D(uPal, vec2((texture2D(uLcA, lcUv).r * 255.0 + 0.5) / 256.0, 0.5)).rgb;
       } else {
-        vec3 c1 = texture2D(uPal, vec2((texture2D(uLc, lcUv).r * 255.0 + 0.5) / 256.0, 0.5)).rgb;
-        vec3 c2 = texture2D(uPal, vec2((texture2D(uLc2, lcUv).r * 255.0 + 0.5) / 256.0, 0.5)).rgb;
+        vec2 lu = uLcFine > 0.5 ? vec2(ovUv.x * uLcFX.x + uLcFX.y, ovUv.y * uLcFX.z + uLcFX.w) : lcUv;
+        vec3 c1 = texture2D(uPal, vec2((texture2D(uLc, lu).r * 255.0 + 0.5) / 256.0, 0.5)).rgb;
+        vec3 c2 = texture2D(uPal, vec2((texture2D(uLc2, lu).r * 255.0 + 0.5) / 256.0, 0.5)).rgb;
         base = mix(c1, c2, uLcT);
       }
     }
@@ -389,6 +392,7 @@ export class CellTerrain {
       uSolR: { value: new THREE.Vector2(1.6, 5.0) },
       uLc: { value: blank }, uLc2: { value: blank }, uLcA: { value: blank }, uPal: { value: blank }, uSolG: { value: blank }, uHgt: { value: blank },
       uLcX: { value: new THREE.Vector4(1, 0, 1, 0) }, uHgtX: { value: new THREE.Vector4(1, 0, 1, 0) },
+      uLcFX: { value: new THREE.Vector4(1, 0, 1, 0) }, uLcFine: { value: 0 },
       uSunL: { value: new THREE.Vector3(-0.55, 0.75, -0.35).normalize() },
       uSunCol: { value: new THREE.Color(1, 0.97, 0.92) },
       uSunI: { value: 0.78 }, uAmb: { value: 0.42 }, uShadow: { value: 0 }, uExag: { value: 1 }, uBase: { value: baseElev },
@@ -784,7 +788,14 @@ export class CellTerrain {
     tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter; tex.generateMipmaps = false; tex.needsUpdate = true;
     return tex;
   }
-  setLanduseBlend(a, b, t) { this.shared.uLc.value = this.#nearest(a); this.shared.uLc2.value = this.#nearest(b); this.shared.uLcT.value = t; }
+  setLanduseBlend(a, b, t) { this.shared.uLc.value = this.#nearest(a); this.shared.uLc2.value = this.#nearest(b); this.shared.uLcT.value = t; this.shared.uLcFine.value = 0; }
+  /** uso do solo de 10 m (2025) no lugar do ano atual: tex = DataTexture (linha 0 = norte), grid = grade dele */
+  setLanduseFine(tex, grid) {
+    const u = this.shared;
+    u.uLc.value = tex; u.uLc2.value = tex; u.uLcT.value = 0;
+    u.uLcFX.value = this.#xform(grid, false);
+    u.uLcFine.value = 1;
+  }
   setBeforeTexture(tex) { this.shared.uLcA.value = this.#nearest(tex); }
   setSplit(px) { this.shared.uSplit.value = px; }
   setSolTexture(tex) { this.shared.uSolG.value = tex; }

@@ -66,6 +66,7 @@ tools/dev/shot.js     captura de tela headless (Playwright + SwiftShader) para c
 | layers/vigor_{aguas,seca}_2026.webp | NDVI da Sentinel-2 (águas jan–abr p70, seca jul–set mediana), cinza 8 bits na grade do car_id (3072×2993): 0 = sem dado, NDVI = (v − 1)/254 − 0,1 |
 | layers/vigor.json | robô "Vigor da pastagem": anos 2019–2026, datas usadas, pasto do município (quartis, séries) e por propriedade [ha de pasto, % fraco, % forte, NDVI águas, NDVI seca, [águas ano a ano], [seca ano a ano]] (NDVI × 100; pasto = MapBiomas 2025 classe 15) |
 | landuse/lc30_{1985..2025}.png | MapBiomas Col. 11, códigos de classe em cinza 8 bits, mesma grade do ANADEM |
+| landuse/lc10_2025.png | MapBiomas 10 m de 2025 (grade G10 de landuse.js, 5011×4565), códigos em PNG de paleta cinza (índice = código), 2,4 MB. No app: opção "Mais detalhe em 2025" (só no último ano; ocupa uLc/uLc2 com a transformação `uLcFX`) e "Comparar com o mapa de 10 m" na ficha (composição 30 m × 10 m calculada no navegador) |
 | landuse/hist.json | % de 6 grupos de uso no município, 41 anos; médias de sol |
 | layers/car.json | 3.726 propriedades (SICAR), contornos simplificados + ficha `s` (uso, relevo, APP, sol, geada…) |
 | layers/car_hist.json | por propriedade (mesmo índice): 41×6 bytes (0–100 %) em base64 |
@@ -87,6 +88,8 @@ A nuvem do Cowork não alcançava os servidores; os dados foram lidos pelo naveg
 na pasta Downloads. Os scripts leem os brutos de `ANDRELANDIA_RAW` (padrão `~/Downloads`).
 
 - MapBiomas Col. 11: `https://storage.googleapis.com/mapbiomas-public/initiatives/brasil/collection11/lulc/coverage/brazil_coverage/brazil_coverage-col11_{ano}.tif`, janela x0 = 109504, y0 = 100013, 1671×1522 → `municipio_mapbiomas30m_1985-2025.bin.gz`
+- MapBiomas 10 m 2025: `municipio_mapbiomas10m_2025.bin.gz` (uint8 5011×4565, grade G10; baixado na época do v0.8),
+  convertido em PNG com PowerShell + System.Drawing (Format8bppIndexed com paleta cinza), sem Python
 - CAR: WFS público `https://geoserver.car.gov.br/geoserver/sicar/wfs`, camada `sicar:sicar_imoveis_mg` → `andrelandia_car.json.gz`
 - ANADEM (UFRGS/ANA), CBERS-4A WPM (INPE, CC BY 4.0), Sentinel-2 L2A (ESA), OSM via Overpass.
 

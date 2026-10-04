@@ -356,6 +356,12 @@
   .cc-list li { display: grid; grid-template-columns: auto 1fr auto; gap: 6px; align-items: center; }
   .cc-list li span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .cc-list b, .cc-kv b { font: 500 12.5px var(--f-data); }
+  .lu-cmp { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  .lu-cmp th { font: 600 10px/1.4 var(--f-display); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-soft); text-align: right; padding: 2px 4px; }
+  .lu-cmp td { padding: 3px 4px; text-align: right; border-top: 1px solid color-mix(in srgb, var(--panel-line) 60%, transparent); font-family: var(--f-data); font-size: 12px; white-space: nowrap; }
+  .lu-cmp td:first-child { text-align: left; font-family: var(--f-body); font-size: 12.5px; white-space: normal; }
+  .lu-cmp td:first-child .lc-sw { margin-right: 6px; vertical-align: -1px; }
+  .lu-cmp small { font-size: 10.5px; } .lu-cmp small.up { color: #1f7a4f; } .lu-cmp small.down { color: #b5532a; }
   .cc-list--hist { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); column-gap: 16px; }
   .cc-kv { margin: 0; font-size: 13.5px; line-height: 1.45; }
   .cc-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: 0; }
@@ -617,6 +623,8 @@
               <input type="range" id="tm-year" min="0" max="40" step="0.01" value="40" aria-label="Ano">
             </div>
             <div class="tm-years" aria-hidden="true"><span>1985</span><span>1995</span><span>2005</span><span>2015</span><span>2025</span></div>
+            <label class="row" for="t-lc10"><span>Mais detalhe em 2025 <small class="dim">(MapBiomas 10 m)</small></span> <input type="checkbox" id="t-lc10"></label>
+            <p id="lc10-state" class="model-state" role="status"></p>
             <p id="tm-state" class="model-state" role="status"></p>
             <div class="hist-wrap" id="tm-chart"></div>
             <div class="grp-legend" id="tm-legend"></div>
@@ -782,7 +790,7 @@
           <span class="group-h">Fontes</span>
           <p><b>Relevo:</b> ANADEM v1.0 (UFRGS/ANA, 2024), 30 m.</p>
           <p><b>Imagem:</b> CBERS-4A (INPE, CC BY 4.0), 23/07/2026, 2 m no município, com cor da Sentinel-2 (ESA).</p>
-          <p><b>Uso do solo:</b> MapBiomas Brasil, Coleção 11 (1985–2025).</p>
+          <p><b>Uso do solo:</b> MapBiomas Brasil, Coleção 11 (1985–2025, 30 m) e o mapa de 10 m de 2025 (imagens Sentinel-2).</p>
           <p><b>Vigor:</b> NDVI da Sentinel-2 L2A (ESA/Copernicus, via Earth Search), águas e seca de 2019 a 2026.</p>
           <p><b>Propriedades:</b> SICAR — Cadastro Ambiental Rural, consulta pública, 03/10/2026. Contornos autodeclarados, sem dados pessoais.</p>
           <p><b>Clima, solo e plantio:</b> Open-Meteo (ERA5), SoilGrids 2.0 (ISRIC), ZARC (MAPA).</p>

@@ -486,7 +486,8 @@ async function start() {
     if (i >= YEARS.length - 1) { i = YEARS.length - 2; f = 1; }
     const near = Math.round(tmPos), yr = YEARS[i] + (YEARS[i + 1] - YEARS[i]) * f;
     tmRange.value = String(tmPos);
-    $('#year-badge').textContent = YEARS[near];
+    const fine = LC10.on && LC10.tex && tmPos >= YEARS.length - 1 - 1e-6;
+    $('#year-badge').textContent = fine ? `${YEARS[near]} · 10 m` : YEARS[near];
     $('#tm-mark').style.left = `${(2 + ((yr - YEARS[0]) / (YEARS.at(-1) - YEARS[0])) * 296) / 3}%`;
     $('#tm-legend').innerHTML = hist.groups.map((g, k) => `<span><span class="lc-sw" style="background:${GROUP_COLORS[k]}"></span>${g}<b>${nf(hist.muni[near][k])}%</b></span>`).join('');
     if (splitOn) updateSplitLabels();
@@ -495,7 +496,93 @@ async function start() {
     const [a, b] = await Promise.all([loadYear(i), loadYear(i + 1)]);
     if (ticket !== tmTicket) return;          // já pediram outro ano
     terrain.setLanduseBlend(a, b, f);
+    if (fine) terrain.setLanduseFine(LC10.tex, LC10.grid);   // 2025 com o mapa de 10 m
     if (i + 2 < YEARS.length) loadYear(i + 2);  // adianta o próximo
+  }
+
+  // --- uso do solo de 10 m (MapBiomas, 2025) ------------------------------------------------------------
+  // PNG de 5011 × 4565 (2,4 MB) lido por faixas para um Uint8Array (um byte por pixel: código da classe); vira textura de
+  // um canal (≈ 23 MB na placa) e serve também para a composição de cada propriedade na ficha. Placa que não aceita
+  // textura tão larga: reduzida pelo vizinho mais próximo (as classes não se misturam).
+  const LC10 = { url: 'data/muni/landuse/lc10_2025.png', grid: GRIDS.g10, on: false, p: null, tex: null, data: null, w: 0, h: 0 };
+  function loadLc10() {
+    LC10.p ??= (async () => {
+      const bmp = await createImageBitmap(await (await fetch(LC10.url)).blob(), { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
+      const W = bmp.width, H = bmp.height, data = new Uint8Array(W * H), S = 256;
+      const cv = document.createElement('canvas'); cv.width = W; cv.height = S;
+      const g = cv.getContext('2d', { willReadFrequently: true });
+      for (let y0 = 0; y0 < H; y0 += S) {
+        const hs = Math.min(S, H - y0);
+        g.clearRect(0, 0, W, S); g.drawImage(bmp, 0, y0, W, hs, 0, 0, W, hs);
+        const px = g.getImageData(0, 0, W, hs).data;
+        for (let i = 0, n = W * hs; i < n; i++) data[y0 * W + i] = px[i * 4];
+      }
+      bmp.close?.();
+      let w = W, h = H, tdata = data;
+      const max = renderer.capabilities.maxTextureSize;
+      if (W > max || H > max) {
+        const k = Math.max(W / max, H / max);
+        w = Math.floor(W / k); h = Math.floor(H / k); tdata = new Uint8Array(w * h);
+        for (let y = 0; y < h; y++) { const sy = Math.min(H - 1, Math.floor(y * k)) * W; for (let x = 0; x < w; x++) tdata[y * w + x] = data[sy + Math.min(W - 1, Math.floor(x * k))]; }
+      }
+      const tex = new THREE.DataTexture(tdata, w, h, THREE.RedFormat, THREE.UnsignedByteType);
+      tex.magFilter = tex.minFilter = THREE.NearestFilter; tex.generateMipmaps = false; tex.unpackAlignment = 1; tex.needsUpdate = true;
+      Object.assign(LC10, { tex, data, w: W, h: H });
+      return LC10;
+    })().catch((e) => { LC10.p = null; throw e; });
+    return LC10.p;
+  }
+  async function setLc10(on) {
+    LC10.on = on;
+    store.set('lc10', on ? '1' : '0');
+    if (on) {
+      if (!LC10.tex) $('#lc10-state').textContent = 'Carregando o mapa de 10 m (2,4 MB)…';
+      try { await loadLc10(); $('#lc10-state').textContent = ''; } catch { $('#lc10-state').textContent = 'Não foi possível carregar o mapa de 10 m.'; LC10.on = false; $('#t-lc10').checked = false; return; }
+      if (!LC10.on) return;
+      if (style.surface === 'landuse') { crossfade(); await setYearPos(YEARS.length - 1); }   // o 10 m é só de 2025
+    } else if (style.surface === 'landuse') { crossfade(); setYearPos(tmPos); }
+  }
+  $('#t-lc10').checked = LC10.on = store.get('lc10') === '1';   // carrega só quando o uso do solo aparece (setSurface)
+  $('#t-lc10').addEventListener('change', (e) => setLc10(e.target.checked));
+  /** composição do uso do solo de uma propriedade no mapa de 10 m: [[código, %, ha]] (maior primeiro) */
+  function lc10Of(x) {
+    const { data, w: W, h: H, grid: G } = LC10;
+    let s = 90, n = -90, wv = 180, e = -180;
+    for (const r of x.f.rings) for (const [la, lo] of r) { s = Math.min(s, la); n = Math.max(n, la); wv = Math.min(wv, lo); e = Math.max(e, lo); }
+    const i0 = Math.max(0, Math.floor((wv - G.lon0) / G.d)), i1 = Math.min(W - 1, Math.ceil((e - G.lon0) / G.d));
+    const j0 = Math.max(0, Math.floor((G.lat0 - n) / G.d)), j1 = Math.min(H - 1, Math.ceil((G.lat0 - s) / G.d));
+    if (i1 < i0 || j1 < j0) return [];
+    const cw = i1 - i0 + 1, ch = j1 - j0 + 1, cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
+    const g = cv.getContext('2d', { willReadFrequently: true });
+    g.fillStyle = '#fff';
+    for (const r of x.f.rings) { g.beginPath(); r.forEach(([la, lo], k) => g[k ? 'lineTo' : 'moveTo']((lo - G.lon0) / G.d - i0, (G.lat0 - la) / G.d - j0)); g.closePath(); g.fill(); }
+    const m = g.getImageData(0, 0, cw, ch).data, cnt = new Map();
+    let tot = 0;
+    for (let j = 0; j < ch; j++) for (let i = 0; i < cw; i++) {
+      if (m[(j * cw + i) * 4 + 3] < 128) continue;
+      const c = data[(j0 + j) * W + i0 + i]; if (!c) continue;
+      cnt.set(c, (cnt.get(c) ?? 0) + 1); tot++;
+    }
+    const ha = (G.d * 111320 * Math.cos(((s + n) / 2) * Math.PI / 180)) * (G.d * 110574) / 1e4;
+    return [...cnt].map(([c, k]) => [c, (100 * k) / tot, k * ha]).sort((a, b) => b[1] - a[1]);
+  }
+  async function showLu10(x) {
+    const box = $('#cc-lu10'), btn = carCard.querySelector('[data-act="lu10"]');
+    if (!box) return;
+    if (btn) { btn.disabled = true; btn.textContent = 'Carregando o mapa de 10 m…'; }
+    try { await loadLc10(); } catch { box.innerHTML = '<p class="cc-note">Não foi possível carregar o mapa de 10 m.</p>'; btn?.remove(); return; }
+    if (carLayer.sel !== x || !box.isConnected) return;
+    const r10 = lc10Of(x), r30 = new Map((x.f.s?.lu ?? []).map(([c, p]) => [c, p]));
+    const codes = [...new Set([...r10.filter((r) => r[1] >= 0.5).map((r) => r[0]), ...[...r30.keys()]])];
+    const p10 = new Map(r10.map((r) => [r[0], r[1]]));
+    codes.sort((a, b) => (p10.get(b) ?? 0) - (p10.get(a) ?? 0));
+    const fmt = (v) => (v == null || v < 0.05 ? '—' : `${nf(v, v < 10 ? 1 : 0)}%`);
+    box.innerHTML = `<table class="lu-cmp"><thead><tr><th></th><th>30 m</th><th>10 m</th></tr></thead><tbody>${codes.map((c) => {
+      const [name, col] = CLASSES[c] ?? [`classe ${c}`, '#999'], a = r30.get(c), b = p10.get(c), dlt = (b ?? 0) - (a ?? 0);
+      return `<tr><td><span class="lc-sw" style="background:${col}"></span>${escH(name)}</td><td>${fmt(a)}</td><td>${fmt(b)}${Math.abs(dlt) >= 3 ? ` <small class="${dlt > 0 ? 'up' : 'down'}">${dlt > 0 ? '+' : ''}${nf(dlt)}</small>` : ''}</td></tr>`;
+    }).join('')}</tbody></table>
+      <p class="cc-note">O mapa de 10 m (MapBiomas, imagens Sentinel-2, 2025) enxerga talhões pequenos, beiras de córrego, estradas e capões que o de 30 m mistura com o vizinho. São mapas feitos por métodos diferentes: a diferença entre as colunas é de detalhe, não mudança no campo.</p>`;
+    btn?.remove();
   }
   tmRange.addEventListener('input', () => { stopPlay(); setYearPos(parseFloat(tmRange.value)); });
   tmRange.addEventListener('change', () => setYearPos(Math.round(parseFloat(tmRange.value))));
@@ -556,7 +643,7 @@ async function start() {
     if (v === 'vigor') loadVigor(VIG.season);
     $('#year-badge').hidden = v !== 'landuse';
     if (SOL[v]) { $('#sol-min').textContent = nf(SOL[v].range[0], 1); $('#sol-max').textContent = nf(SOL[v].range[1], 1); $('#sol-note').textContent = SOL[v].note; }
-    if (v === 'landuse') setYearPos(tmPos); else stopPlay();
+    if (v === 'landuse') { if (LC10.on && !LC10.tex) setLc10(true); else setYearPos(tmPos); } else stopPlay();
     if (splitOn) updateSplitLabels();
     store.set('surface', v);
   }
@@ -1049,6 +1136,7 @@ async function start() {
     if (act === 'water') setWater(waterInfo?.x === x ? null : x);
     if (act === 'route') setRoute(routeX === x ? null : x);
     if (act === 'peak') { carLayer.showPeak(); if (mqPhone.matches) setSheet('peek'); }
+    if (act === 'lu10') showLu10(x);
     if (act === 'vigmap') {   // mostra o mapa de vigor e enquadra a propriedade
       const el = $('#s-vig'); el.checked = true; setSurface('vigor', { fade: true }); carLayer.select(x, { fit: true });
       if (mqPhone.matches) setSheet('peek');
