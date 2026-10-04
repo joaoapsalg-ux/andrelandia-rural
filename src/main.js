@@ -110,8 +110,6 @@ async function start() {
   camera.position.copy(vpos(VIEWS.municipio));
   controls.target.copy(vtgt(VIEWS.municipio));
   controls.update();
-  const small = matchMedia('(max-width: 700px)').matches;
-  if (small) $('#layers').open = false;
 
   // --- lugares e vetores -----------------------------------------------------
   const manualNames = new Set(MANUAL_POIS.map((p) => p.name));
@@ -142,7 +140,9 @@ async function start() {
     const { lat, lon } = frame.toLatLon(cx, cz);
     const tgt = terrain.worldPosition(lat, lon);
     const dir = camera.position.clone().sub(controls.target); dir.y = 0; dir.normalize();
-    const dist = size * pad;
+    // mapa à mostra mais alto que largo (celular em pé, gaveta aberta): afasta mais para caber na largura
+    const cw = renderer.domElement.clientWidth || 1, chv = (renderer.domElement.clientHeight || 1) * (mqPhone.matches ? 0.5 : 1);
+    const dist = size * pad * Math.max(1, 1.15 / (cw / chv));
     const to = tgt.clone().add(dir.multiplyScalar(dist * 0.75)); to.y = tgt.y + dist * 0.75;
     orbit = null;
     flight = { t: 0, from: camera.position.clone(), to, tFrom: controls.target.clone(), tTo: tgt, dur: 2 };
@@ -178,12 +178,94 @@ async function start() {
   }
   controls.addEventListener('start', () => { flight = null; follow = false; if (orbit) stopOrbit(); });
 
-  // --- painéis de baixo (um por vez) --------------------------------------------
-  const PANELS = { info: $('#info'), car: $('#car-card'), drop: $('#drop-card'), profile: $('#profile') };
-  function openPanel(name) {
-    for (const [k, el] of Object.entries(PANELS)) el.hidden = k !== name;
-    if (name !== 'car' && carLayer.sel) carLayer.select(null);   // o destaque acompanha a ficha
+  // --- menu: barra de ícones + painel (largura ajustável no computador; gaveta no celular) ------------
+  const side = $('#side'), pane = $('#pane'), paneBody = $('#pane-body'), root = document.documentElement;
+  const mqPhone = matchMedia('(max-width: 700px)'), mqWide = matchMedia('(min-width: 1000px)');
+  const RAIL_W = 68, PANE_MIN = 320, PANE_DEF = 400;
+  let paneWant = Math.max(PANE_MIN, parseInt(store.get('paneW') ?? '', 10) || PANE_DEF), paneW = paneWant;   // largura escolhida · largura que cabe
+  let curPane = 'prop';
+  let collapsed = mqPhone.matches || store.get('paneOpen') === '0';
+  let menuReady = false;   // a bolinha da barra depende das propriedades (ainda não carregadas no começo)
+  function layout() {
+    paneW = Math.min(paneWant, Math.max(PANE_MIN, Math.min(760, innerWidth * 0.6)));
+    root.style.setProperty('--pane-w', `${paneW}px`);
+    side.classList.toggle('is-collapsed', collapsed);
+    side.classList.toggle('is-narrow', paneW < 440);
+    // computador largo: o mapa começa depois do painel; tablet: o painel passa por cima; celular: gaveta por cima
+    const off = document.body.classList.contains('ui-hidden') || document.body.classList.contains('demo');
+    const w = off || mqPhone.matches ? 0 : mqWide.matches && !collapsed ? RAIL_W + paneW : RAIL_W;
+    root.style.setProperty('--side-w', `${w}px`);
+    document.querySelectorAll('.rail-btn[data-pane]').forEach((b) => b.setAttribute('aria-current', String(!collapsed && b.dataset.pane === curPane)));
+    if (menuReady) $('#rail-dot').hidden = !carLayer.sel || (!collapsed && curPane === 'prop');
   }
+  function setSheet(s) { pane.classList.toggle('is-full', s === 'full'); pane.classList.toggle('is-peek', s === 'peek'); }
+  function setCollapsed(c) {
+    collapsed = c;
+    if (!mqPhone.matches) store.set('paneOpen', c ? '0' : '1');
+    layout();
+  }
+  /** mostra uma parte do painel (abre o painel se estava recolhido); sheet: altura da gaveta no celular */
+  function showPane(name, { sheet = 'half' } = {}) {
+    const changed = name !== curPane;
+    curPane = name;
+    document.querySelectorAll('.pane').forEach((p) => p.classList.toggle('is-on', p.dataset.pane === name));
+    if (mqPhone.matches && (collapsed || changed)) setSheet(sheet);
+    if (changed) paneBody.scrollTop = 0;
+    setCollapsed(false);
+  }
+  document.querySelectorAll('.rail-btn[data-pane]').forEach((b) => b.addEventListener('click', () => {
+    if (b.dataset.pane === curPane && !collapsed) setCollapsed(true); else showPane(b.dataset.pane);
+  }));
+  $('#pane-x').addEventListener('click', () => setCollapsed(true));
+  // largura: arrastar a borda do painel (duplo clique volta ao padrão)
+  {
+    const grip = $('#pane-resize');
+    grip.addEventListener('pointerdown', (e) => {
+      grip.setPointerCapture(e.pointerId); grip.classList.add('is-drag'); document.body.classList.add('is-resizing');
+      const move = (ev) => { paneWant = Math.max(PANE_MIN, Math.min(760, ev.clientX - RAIL_W)); layout(); };
+      const up = () => {
+        grip.removeEventListener('pointermove', move); grip.removeEventListener('pointerup', up);
+        grip.classList.remove('is-drag'); document.body.classList.remove('is-resizing');
+        store.set('paneW', String(Math.round(paneWant)));
+        if (carLayer.sel && !carCard.hidden) renderCard(carLayer.sel);   // gráficos na largura nova
+      };
+      grip.addEventListener('pointermove', move); grip.addEventListener('pointerup', up);
+    });
+    grip.addEventListener('dblclick', () => { paneWant = PANE_DEF; store.set('paneW', String(PANE_DEF)); layout(); if (carLayer.sel && !carCard.hidden) renderCard(carLayer.sel); });
+  }
+  // celular: alça da gaveta — tocar alterna meia/alta; arrastar para cima abre, para baixo baixa e depois recolhe
+  {
+    const grip = $('#pane-grip');
+    let y0 = null;
+    grip.addEventListener('pointerdown', (e) => { y0 = e.clientY; grip.setPointerCapture(e.pointerId); });
+    grip.addEventListener('pointerup', (e) => {
+      if (y0 == null) return;
+      const dy = e.clientY - y0; y0 = null;
+      const full = pane.classList.contains('is-full'), peek = pane.classList.contains('is-peek');
+      if (Math.abs(dy) < 8) setSheet(full ? 'half' : 'full');
+      else if (dy < 0) setSheet(peek ? 'half' : 'full');
+      else if (full) setSheet('half');
+      else if (!peek) setSheet('peek');
+      else setCollapsed(true);
+    });
+  }
+  addEventListener('resize', layout);
+  mqPhone.addEventListener('change', () => { collapsed = mqPhone.matches || store.get('paneOpen') === '0'; layout(); });
+  mqWide.addEventListener('change', layout);
+  layout();
+
+  // --- resultados no painel: ficha (Propriedade), gota e perfil (Ferramentas), lugar (Lugares) -------------
+  const PANELS = { info: $('#info'), car: $('#car-card'), drop: $('#drop-card'), profile: $('#profile') };
+  const PANE_OF = { info: 'lugares', car: 'prop', drop: 'ferr', profile: 'ferr' };
+  function openPanel(name) {
+    if (name === 'drop') PANELS.profile.hidden = true;
+    if (name === 'profile') PANELS.drop.hidden = true;
+    if (name === 'car') showCard(true); else PANELS[name].hidden = false;
+    // no celular a gota e o perfil abrem a gaveta baixa: o mapa (onde a gota desce) continua à vista
+    showPane(PANE_OF[name], { sheet: name === 'drop' || name === 'profile' ? 'peek' : 'half' });
+    if (name !== 'car') requestAnimationFrame(() => PANELS[name].scrollIntoView({ block: 'nearest', behavior: reduceMotion.matches ? 'auto' : 'smooth' }));
+  }
+  function showCard(on) { PANELS.car.hidden = !on; $('#prop-empty').hidden = on; layout(); }
   let infoPOI = null;
   function showInfo(p) {
     infoPOI = p;
@@ -194,6 +276,7 @@ async function start() {
     openPanel('info');
   }
   $('#info-close').addEventListener('click', () => { PANELS.info.hidden = true; infoPOI = null; });
+  $('#rail-logo').addEventListener('click', () => flyToView(VIEWS.municipio));
   document.addEventListener('click', (e) => {
     const c = e.target.closest('[data-close]'); if (!c) return;
     PANELS[c.dataset.close].hidden = true;
@@ -349,6 +432,8 @@ async function start() {
     $('#sol-panel').hidden = !SOL[v];
     $('#geada-panel').hidden = v !== 'geada';
     $('#alt-panel').hidden = v !== 'altitude';
+    $('#vig-panel').hidden = v !== 'vigor';
+    if (v === 'vigor') loadVigor(VIG.season);
     $('#year-badge').hidden = v !== 'landuse';
     if (SOL[v]) { $('#sol-min').textContent = nf(SOL[v].range[0], 1); $('#sol-max').textContent = nf(SOL[v].range[1], 1); $('#sol-note').textContent = SOL[v].note; }
     if (v === 'landuse') setYearPos(tmPos); else stopPlay();
@@ -357,10 +442,40 @@ async function start() {
   }
   $('#surface').addEventListener('change', (e) => { if (e.target.name === 'surface') setSurface(e.target.value, { fade: true }); });
 
+  // --- vigor da vegetação (NDVI da Sentinel-2): um mapa por estação de 2026, só o da estação escolhida vira textura ---
+  const VIG = { season: store.get('vigSeason') === 'seca' ? 'seca' : 'aguas', tex: null, key: null, p: null };
+  const VIG_NOTE = {
+    aguas: 'O quanto a vegetação estava verde nas águas de 2026 (jan–abr), pela Sentinel-2 (10 m). Pasto bem formado fica verde; o que segue marrom nas águas pode ser pasto fraco, solo exposto ou roçado. Mata fica sempre verde-escura.',
+    seca: 'O verde que sobrou na seca de 2026 (jul–set). Pasto seca e fica marrom — é normal; o que segura o verde costuma ser baixada úmida, capineira, irrigação, eucalipto ou mata.',
+  };
+  function loadVigor(season) {
+    $('#vig-note').textContent = VIG_NOTE[season];
+    if (VIG.key === season) return VIG.p;
+    VIG.key = season;
+    $('#vig-state').textContent = 'Carregando o mapa de vigor…';
+    VIG.p = carLayer.loadVigor().then((d) => {
+      if (!d) throw new Error('sem vigor.json');
+      return new THREE.TextureLoader().loadAsync(`data/muni/layers/vigor_${season}_${d.years.at(-1)}.webp`);
+    }).then((t) => {
+      if (VIG.key !== season) { t.dispose(); return VIG.p; }   // trocaram de estação enquanto carregava
+      VIG.tex?.dispose(); VIG.tex = t;
+      terrain.setVigorTexture(t);
+      $('#vig-state').textContent = '';
+      return t;
+    }).catch(() => { VIG.key = null; $('#vig-state').textContent = 'O mapa de vigor ainda não está disponível.'; return null; });
+    return VIG.p;
+  }
+  $(`#vs-${VIG.season}`).checked = true;
+  document.querySelectorAll('input[name="vig-season"]').forEach((r) => r.addEventListener('change', () => {
+    if (!r.checked) return;
+    VIG.season = r.value; store.set('vigSeason', r.value);
+    if (style.surface === 'vigor') { crossfade(); loadVigor(r.value); }
+  }));
+
   // --- antes e depois ------------------------------------------------------------------
   let splitOn = false, splitX = 0.5, beforeIdx = 0;
   const splitEl = $('#split');
-  const SURF_NAME = { satellite: 'Satélite hoje', altitude: 'Altitude', 'sol-inverno': 'Sol no inverno', 'sol-verao': 'Sol no verão', geada: 'Geada' };
+  const SURF_NAME = { satellite: 'Satélite hoje', altitude: 'Altitude', vigor: 'Vigor 2026', 'sol-inverno': 'Sol no inverno', 'sol-verao': 'Sol no verão', geada: 'Geada' };
   const splitSel = $('#split-year');
   splitSel.innerHTML = YEARS.slice(0, -1).map((y, k) => `<option value="${k}">${y}</option>`).join('');
   function updateSplitLabels() {
@@ -368,8 +483,8 @@ async function start() {
     $('#split-r').textContent = style.surface === 'landuse' ? `${YEARS[Math.round(tmPos)]} ▸` : `${SURF_NAME[style.surface]} ▸`;
   }
   function placeSplit() {
-    const w = renderer.domElement.clientWidth;
-    splitEl.style.left = `${splitX * w}px`;
+    const r = renderer.domElement.getBoundingClientRect(), w = r.width;
+    splitEl.style.left = `${r.left + splitX * w}px`;
     terrain.setSplit(splitOn ? splitX * w * renderer.getPixelRatio() : -1);
   }
   async function setSplit(on) {
@@ -382,7 +497,7 @@ async function start() {
   splitEl.addEventListener('pointerdown', (e) => {
     if (e.target.closest('.tag')) return;
     splitEl.setPointerCapture(e.pointerId);
-    const move = (ev) => { splitX = Math.min(0.97, Math.max(0.03, ev.clientX / renderer.domElement.clientWidth)); placeSplit(); };
+    const move = (ev) => { const r = renderer.domElement.getBoundingClientRect(); splitX = Math.min(0.97, Math.max(0.03, (ev.clientX - r.left) / r.width)); placeSplit(); };
     const up = () => { splitEl.removeEventListener('pointermove', move); splitEl.removeEventListener('pointerup', up); };
     splitEl.addEventListener('pointermove', move); splitEl.addEventListener('pointerup', up);
   });
@@ -451,6 +566,7 @@ async function start() {
     onSelect: (x) => onCarSelect(x),
   });
   carLayer.muni = hist;
+  menuReady = true;
   const carBox = $('#t-car'), carCard = $('#car-card'), carTip = $('#car-tip'), carSel = $('#car-crit');
   carSel.innerHTML = Object.entries(CRITERIA).map(([k, c]) => `<option value="${k}">${c.label}</option>`).join('');
   carSel.value = CRITERIA[store.get('carCrit')] ? store.get('carCrit') : 'tamanho';
@@ -476,7 +592,11 @@ async function start() {
     const st = carLayer.data.stats_andrelandia, r = carLayer.data.resumo;
     const tot = Object.values(st).reduce((x, y) => x + y.n, 0);
     $('#car-sum').innerHTML = `<b>${nf(tot)}</b> propriedades declaradas em Andrelândia, cobrindo ${nf(r.cobertos_car_pct)}% do município.`;
+    const ms = $('#muni-stats');
+    ms.innerHTML = `<div><b>${nf(tot)}</b><span>propriedades no CAR</span></div><div><b>${nf(r.cobertos_car_pct)}%</b><span>do município cadastrado</span></div><div><b>${nf(r.nascentes)}</b><span>nascentes estimadas</span></div>`;
+    ms.hidden = false;
     renderCarLegend();
+    carLayer.loadVigor().then(() => { if (carLayer.criterion === 'vigor') { carLayer.redraw(); renderCarLegend(); } });
   }
   carBox.checked = (store.get('car') ?? '1') === '1';
   if (carBox.checked) drawCar(true);
@@ -484,49 +604,35 @@ async function start() {
   carSel.addEventListener('change', () => { carLayer.setCriterion(carSel.value); store.set('carCrit', carSel.value); renderCarLegend(); });
   async function ensureCar() { if (!carBox.checked) { carBox.checked = true; store.set('car', '1'); } if (!carLayer.on) await drawCar(true); }
 
-  const cardWide = matchMedia('(min-width: 1000px)'), cardSheet = matchMedia('(max-width: 700px)');
   let mine = store.get('mine');
   const mineBtn = $('#mine-btn');
   mineBtn.hidden = !mine;
-  // abas da ficha (a última escolhida fica guardada)
+  // abas da ficha (a última escolhida fica guardada; a primeira vez abre no resumo)
   function setCardTab(k) {
     const body = $('#car-card-body');
+    if (!body.querySelector(`[data-tab-btn="${k}"]`)) k = 'resumo';
     body.dataset.tab = k;
     body.querySelectorAll('[data-tab-btn]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tabBtn === k)));
-    store.set('cardTab', k);
+    store.set('cardTab2', k);
   }
   const renderCard = (x) => {
-    $('#car-card-body').innerHTML = carLayer.card(x, { mine: x.f.cod === mine, chartW: Math.round(Math.min(cardWide.matches ? 380 : 660, innerWidth - 32) - (innerWidth <= 700 ? 30 : 38)) });
-    setCardTab(store.get('cardTab') || 'terra');
+    const w = mqPhone.matches ? innerWidth - 32 : paneW - 40;
+    $('#car-card-body').innerHTML = carLayer.card(x, { mine: x.f.cod === mine, chartW: Math.round(Math.max(260, w)) });
+    setCardTab(store.get('cardTab2') || 'resumo');
     syncWaterUI();
     setTimeout(() => fillAccess(x), 30);   // a primeira vez monta o grafo das estradas (~0,2 s): a ficha aparece antes
     fillAgro(x);
   };
   async function openCarCard(x, { fit = false } = {}) {
     carLayer.select(x, { fit });
-    await carLayer.loadHist();
+    await Promise.all([carLayer.loadHist(), carLayer.loadVigor()]);
+    if (carLayer.sel !== x) return;   // escolheram outra enquanto os arquivos chegavam
     infoPOI = null;
     renderCard(x);
-    const wasOpen = !carCard.hidden;
     openPanel('car');
-    if (cardSheet.matches && !wasOpen) carCard.classList.add('is-peek');   // celular: abre baixa, mostrando só o cabeçalho
-    carCard.scrollTop = 0;
+    paneBody.scrollTop = 0;
   }
-  // celular: a ficha é uma gaveta — arrastar a alça para cima abre, para baixo baixa (e fecha, se já estava baixa)
-  {
-    const grip = $('#car-card-grip');
-    let y0 = null;
-    grip.addEventListener('pointerdown', (e) => { y0 = e.clientY; grip.setPointerCapture(e.pointerId); });
-    grip.addEventListener('pointerup', (e) => {
-      if (y0 == null) return;
-      const dy = e.clientY - y0; y0 = null;
-      if (Math.abs(dy) < 8) carCard.classList.toggle('is-peek');
-      else if (dy < 0) carCard.classList.remove('is-peek');
-      else if (carCard.classList.contains('is-peek')) closeCarCard();
-      else carCard.classList.add('is-peek');
-    });
-  }
-  function closeCarCard() { carCard.hidden = true; carLayer.select(null); }
+  function closeCarCard() { showCard(false); carLayer.select(null); layout(); }
   $('#car-card-close').addEventListener('click', closeCarCard);
 
   // --- link direto (#car=código) ---------------------------------------------------------------------
@@ -534,6 +640,7 @@ async function start() {
     if (waterInfo && waterInfo.x !== x) setWater(null);
     if (routeX && routeX !== x) setRoute(null);
     if (demo.running && demo.run.x !== x) demo.stop();   // trocou de propriedade (ex.: link aberto) no meio da demonstração
+    layout();   // bolinha na barra: há uma propriedade escolhida
     try { history.replaceState(null, '', x ? `#car=${encodeURIComponent(x.f.cod)}` : location.pathname + location.search); } catch { /* moldura sem histórico */ }
   }
   async function openFromHash() {
@@ -603,6 +710,9 @@ async function start() {
     const box = $('#cc-access');
     if (!box || carLayer.sel !== x) return;
     const r = roads.route(x), t = accessText(r, nf);
+    const rs = $('#rs-acesso');
+    if (rs) rs.innerHTML = !r?.city ? '<span class="d">Sem caminho pelas estradas do mapa.</span>'
+      : `<span class="v">${t.km(r.city.m)} <small>até o centro</small></span><span class="d">${!r.asphalt ? '' : r.asphalt.m < 100 ? 'Asfalto passa na propriedade' : `Asfalto a ${t.km(r.asphalt.m)}`}${r.city.dirt >= 50 ? ` · ${t.km(r.city.dirt)} de terra até o centro` : ''}</span>`;
     box.innerHTML = !r ? `<p class="cc-kv">${t.city}.</p>`
       : `<p class="cc-kv">Centro de Andrelândia <b>${r.city ? t.km(r.city.m) : '—'}</b>${r.city ? (r.city.dirt >= 50 ? ` · ${t.km(r.city.dirt)} de terra` : ' · todo no asfalto') : ''}</p>
         <p class="cc-kv">Asfalto <b>${!r.asphalt ? '—' : r.asphalt.m < 100 ? 'passa na propriedade' : t.km(r.asphalt.m)}</b>${t.where && r.asphalt.m >= 100 ? (r.asphalt.urban ? ' · chega numa rua calçada' : ` · chega na ${t.where}`) : ''}</p>
@@ -633,10 +743,19 @@ async function start() {
   const escH = (t) => String(t).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]);
   const zarcRow = (z) => `<div class="zarc-row"><span class="zarc-name" title="${escH(`${z.ciclo} · solo ${z.solo} · ${z.manejo}`)}">${escH(z.crop)}</span>${zarcStrip(z.risk, { w: 360, h: 11 })}<span class="zarc-best">${bestWindow(z.risk) ?? 'não indicado'}</span></div>`;
   async function fillAgro(x) {
-    const boxes = ['#cc-clima', '#cc-solo', '#cc-zarc'];
+    const boxes = ['#cc-clima', '#cc-solo', '#cc-zarc', '#rs-clima', '#rs-solo', '#rs-zarc'];
     try { await agro.load(); } catch { boxes.forEach((b) => { const el = $(b); if (el) el.innerHTML = '<p class="cc-note">Não foi possível carregar.</p>'; }); return; }
     if (carLayer.sel !== x || !$('#cc-clima')) return;
     const { climate: c, soil: s } = agro.of(x), t = agroText(c, s, nf);
+    // cartões do resumo
+    const rsC = $('#rs-clima'), rsS = $('#rs-solo'), rsZ = $('#rs-zarc');
+    if (rsC) rsC.innerHTML = `<span class="v">${nf(c.year)} <small>mm de chuva/ano</small></span><span class="d">${t.dry[0].toUpperCase() + t.dry.slice(1)}</span>`;
+    if (rsS) rsS.innerHTML = !s ? '<span class="d">Sem dado de solo aqui.</span>'
+      : `<span class="v">${s.tipoName[0].toUpperCase() + s.tipoName.slice(1)}</span><span class="d">${s.cls ? `${s.cls} · ` : ''}argila ${nf(s.clay)}% · pH ${nf(s.ph, 1)}</span>`;
+    if (rsZ) {
+      const zs = FEATURED.map((n) => agro.zarcFor(n, s)).filter(Boolean).map((z) => [z.crop, bestWindow(z.risk)]).filter((z) => z[1]).slice(0, 4);
+      rsZ.innerHTML = zs.length ? `<ul class="cc-list">${zs.map(([n, w]) => `<li><span class="lc-sw" style="background:#3f9d5a"></span><span>${escH(n)}</span><b>${w}</b></li>`).join('')}</ul>` : '<span class="d">Nenhuma cultura indicada aqui.</span>';
+    }
     $('#cc-clima').innerHTML = `${climateChart(c, { w: 320, h: 104 })}
       <p class="cc-kv"><b>${nf(c.year)} mm</b> de chuva por ano · ${t.dry}</p>
       <p class="cc-kv">${t.temp[0].toUpperCase() + t.temp.slice(1)}</p>
@@ -664,6 +783,7 @@ async function start() {
   // fotografa a cena num tamanho fixo (mesmo quadro: nada pisca na tela)
   function captureView(w, h) {
     const pr = renderer.getPixelRatio();
+    camera.clearViewOffset();   // o laço principal repõe o deslocamento da gaveta no quadro seguinte
     renderer.setPixelRatio(1); renderer.setSize(w, h, false);
     camera.aspect = w / h; camera.updateProjectionMatrix();
     vectors.setResolution(w, h); drop.setResolution(w, h); terrain.setSplit(-1);
@@ -688,7 +808,8 @@ async function start() {
       const { climate, soil } = agro.of(x);
       agroInfo = { climate, soil, text: agroText(climate, soil, nf), zarc: FEATURED.map((n) => agro.zarcFor(n, soil)).filter(Boolean).map((z) => ({ ...z, best: bestWindow(z.risk) })) };
     } catch { /* sem os arquivos: a folha sai sem essa parte */ }
-    return buildSheet({ x, car: carLayer, view, water: waterInfo?.x === x ? waterInfo.st : null, access: roads.route(x), agro: agroInfo, nf, fmtDate, exag: terrain.exaggeration });
+    await carLayer.loadVigor();
+    return buildSheet({ x, car: carLayer, view, water: waterInfo?.x === x ? waterInfo.st : null, access: roads.route(x), agro: agroInfo, vigor: carLayer.vigorOf(x), nf, fmtDate, exag: terrain.exaggeration });
   }
   // no Artifact o arquivo sai pela capacidade "downloads" (o visitante confirma); fora dele, download comum
   async function saveFile(blob, filename) {
@@ -719,6 +840,8 @@ async function start() {
   const demo = new PropertyDemo({
     terrain, carLayer, drop, nf, fmtLen, years: YEARS, loadYear, blobOf, muni: hist,
     access: { route: (x) => roads.route(x), layer: accessLayer }, agro, fade: crossfade,
+    // vigor: a cena do pasto usa o mapa das águas (a estação escolhida volta no fim, em setSurface)
+    vigor: { ensure: () => loadVigor('aguas'), of: (x) => carLayer.vigorOf(x) },
     onFrame: (pts) => { stopOrbit(); fitLatLon(pts, 1.15); },
     // tomadas da câmera por cena, em volta da propriedade: aberta, de cima, rasante, perto, longe
     onShot: (x, kind) => {
@@ -731,8 +854,9 @@ async function start() {
     onStart: (x) => {
       setTool(null); stopPlay(); tmTicket++; drop.stop(); follow = false; setWater(null); setRoute(null);
       demoSplit = splitOn; if (splitOn) setSplit(false);
-      carCard.hidden = true; carTip.hidden = true; carLayer.setHover(null);
+      carTip.hidden = true; carLayer.setHover(null);
       document.body.classList.add('demo');
+      layout();   // o menu sai e o mapa ocupa a tela toda
       // primeira tomada: alta e longe; cada cena depois escolhe a sua (onShot). Tela em pé: a câmera fica mais longe
       const ex = carLayer.extent(x), { lat, lon } = frame.toLatLon(ex.x, ex.z);
       startOrbit(terrain.worldPosition(lat, lon), Math.max(800, ex.size * 2.2 * Math.max(1, 1.1 / camera.aspect)), 'Demonstração', { hRatio: 0.9, speed: 0.5 });
@@ -740,6 +864,7 @@ async function start() {
     onStop: (x, ended) => {
       stopOrbit();
       document.body.classList.remove('demo');
+      layout();
       terrain.setStyle({ contours: style.contours, interval: style.interval });
       setSurface(style.surface);
       if (demoSplit) setSplit(true);
@@ -750,8 +875,15 @@ async function start() {
   controls.addEventListener('start', () => demo.stop());   // mexer no mapa (arrastar, girar, zoom) para a demonstração
 
   carCard.addEventListener('click', (e) => {
-    const tb = e.target.closest('[data-tab-btn]');
-    if (tb) { setCardTab(tb.dataset.tabBtn); carCard.classList.remove('is-peek'); carCard.scrollTop = 0; return; }
+    // aba (ou cartão do resumo que leva a uma aba): a ficha volta para o alto das abas, se tinha descido além delas
+    const tb = e.target.closest('[data-tab-btn], [data-goto]');
+    if (tb) {
+      setCardTab(tb.dataset.tabBtn ?? tb.dataset.goto);
+      if (mqPhone.matches) setSheet('full');
+      const tabs = carCard.querySelector('.cc-tabs');
+      if (tabs) { const top = paneBody.scrollTop + tabs.getBoundingClientRect().top - paneBody.getBoundingClientRect().top; if (paneBody.scrollTop > top) paneBody.scrollTop = top; }
+      return;
+    }
     const nb = e.target.closest('[data-nb]');
     if (nb) { carLayer.setHover(null); openCarCard(carLayer.index[+nb.dataset.nb], { fit: true }); return; }
     const act = e.target.closest('[data-act]')?.dataset.act;
@@ -761,10 +893,14 @@ async function start() {
     if (act === 'sheet') saveSheet(x);
     if (act === 'water') setWater(waterInfo?.x === x ? null : x);
     if (act === 'route') setRoute(routeX === x ? null : x);
-    if (act === 'peak') carLayer.showPeak();
+    if (act === 'peak') { carLayer.showPeak(); if (mqPhone.matches) setSheet('peek'); }
+    if (act === 'vigmap') {   // mostra o mapa de vigor e enquadra a propriedade
+      const el = $('#s-vig'); el.checked = true; setSurface('vigor', { fade: true }); carLayer.select(x, { fit: true });
+      if (mqPhone.matches) setSheet('peek');
+    }
     if (act === 'orbit') {
       const ex = carLayer.extent(x); const { lat, lon } = frame.toLatLon(ex.x, ex.z);
-      carCard.hidden = true;   // a ficha sai da frente; o contorno continua destacado
+      if (mqPhone.matches) setCollapsed(true);   // celular: a gaveta sai da frente; o contorno continua destacado
       startOrbit(terrain.worldPosition(lat, lon), Math.max(500, ex.size * 1.05), `Sobrevoando a propriedade de ${nf(x.f.ha, x.f.ha < 10 ? 1 : 0)} ha`);
     }
     if (act === 'mine') {
@@ -797,7 +933,7 @@ async function start() {
     const b = e.target.closest('button[data-k]'); if (!b) return;
     await ensureCar();
     openCarCard(carLayer.index[+b.dataset.k], { fit: true });
-    if (small) $('#title').scrollTop = 0;
+    results.innerHTML = ''; q.value = '';
   });
   // passar o mouse destaca a propriedade
   function carHover(lat, lon, ev) {
@@ -822,6 +958,7 @@ async function start() {
     if (t) $('#tool-hint-text').textContent = HINT[t];
     renderer.domElement.style.cursor = t ? 'crosshair' : '';
     carLayer.setHover(null); carTip.hidden = true;
+    if (t && mqPhone.matches) setCollapsed(true);   // celular: a gaveta sai para tocar no mapa
   }
   $('#tool-drop').addEventListener('click', () => setTool(tool === 'drop' ? null : 'drop'));
   $('#tool-profile').addEventListener('click', () => { if (tool === 'profile') { setTool(null); } else { profile.clear(); setTool('profile'); } });
@@ -829,6 +966,7 @@ async function start() {
   $('#tool-orbit').addEventListener('click', () => {
     if (orbit) { stopOrbit(); return; }
     if (carLayer.sel && !carCard.hidden) { carCard.querySelector('[data-act="orbit"]').click(); return; }
+    if (mqPhone.matches) setCollapsed(true);
     startOrbit(controls.target.clone(), Math.max(800, Math.min(25000, camera.position.distanceTo(controls.target) * 0.8)), 'Sobrevoo');
   });
   $('#tool-hint-x').addEventListener('click', () => { setTool(null); stopOrbit(); });
@@ -913,15 +1051,16 @@ async function start() {
     flight = { t: 0, from: camera.position.clone(), to: new THREE.Vector3(t.x, t.y + h, t.z + 10), tFrom: t, tTo: t, dur: 1.6 };
   });
 
-  // ocultar painéis (botão ou tecla H)
+  // só o mapa: esconde o menu e a bússola (botão na barra ou tecla H); um botão no canto traz de volta
   const uiBtn = $('#ui-toggle');
   function setUIHidden(h) {
     document.body.classList.toggle('ui-hidden', h);
     uiBtn.setAttribute('aria-pressed', String(h));
-    $('#ui-toggle-label').textContent = h ? 'Mostrar painéis' : 'Ocultar painéis';
     store.set('uiHidden', h ? '1' : '0');
+    layout();
   }
-  uiBtn.addEventListener('click', () => setUIHidden(!document.body.classList.contains('ui-hidden')));
+  uiBtn.addEventListener('click', () => setUIHidden(true));
+  $('#ui-restore').addEventListener('click', () => setUIHidden(false));
   window.addEventListener('keydown', (e) => {
     if (e.target.closest?.('input, textarea, select') || e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === 'h' || e.key === 'H') setUIHidden(!document.body.classList.contains('ui-hidden'));
@@ -961,7 +1100,7 @@ async function start() {
 
   // --- laço principal ------------------------------------------------------------------------------------
   const clock = new THREE.Clock();
-  let lastSlow = 0;
+  let lastSlow = 0, viewOff = 0;
   function tick() {
     const dt = Math.min(clock.getDelta(), 0.05);
     stepFlight(dt);
@@ -974,6 +1113,15 @@ async function start() {
       controls.target.add(delta); camera.position.add(delta);
     }
     controls.update();
+    // celular: a gaveta cobre a parte de baixo do mapa — o centro da vista sobe para o meio da parte que fica à mostra
+    {
+      const h = renderer.domElement.clientHeight, w = renderer.domElement.clientWidth;
+      const want = mqPhone.matches && !document.body.classList.contains('demo') && !document.body.classList.contains('ui-hidden')
+        ? Math.max(0, Math.min(h * 0.6, innerHeight - side.getBoundingClientRect().top)) : 0;
+      viewOff += (want - viewOff) * Math.min(1, dt * 6);
+      if (want === 0 && viewOff < 0.5) { viewOff = 0; if (camera.view?.enabled) camera.clearViewOffset(); }
+      else camera.setViewOffset(w, h + viewOff, 0, viewOff, w, h);
+    }
     const gy = terrain.groundY(camera.position.x, camera.position.z) + 40;
     if (camera.position.y < gy) camera.position.y = gy;
     const now = performance.now();
@@ -1018,7 +1166,7 @@ async function start() {
   openFromHash();   // link direto: #car=código
   setTimeout(() => { terrain.buildRelief(); terrain.setRelief(1); }, 400);   // volume do relevo (~0,1 s, depois do 1º quadro)
 
-  window.app = { THREE, renderer, scene, camera, controls, terrain, hf, frame, vectors, carLayer, openCarCard, demo, setWater, makeSheet, drop, rain, profile, setSurface, setYearPos, setSplit, startOrbit, flyToView, VIEWS, setTool };
+  window.app = { THREE, renderer, scene, camera, controls, terrain, hf, frame, vectors, carLayer, openCarCard, demo, setWater, makeSheet, drop, rain, profile, setSurface, setYearPos, setSplit, startOrbit, flyToView, VIEWS, setTool, showPane, setCollapsed, loadVigor };
 }
 
 start().catch((err) => {

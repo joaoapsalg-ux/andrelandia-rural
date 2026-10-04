@@ -15,7 +15,7 @@ const F = {
  * monta a folha e devolve um Blob PNG
  * x: propriedade escolhida · car: CarLayer · view: canvas com a vista 3D · water: resultado de PropertyWater.show ou null
  */
-export async function buildSheet({ x, car, view, water, access, agro, nf, fmtDate, exag, today = new Date() }) {
+export async function buildSheet({ x, car, view, water, access, agro, vigor, nf, fmtDate, exag, today = new Date() }) {
   await Promise.all(['700 72px "Barlow Condensed"', '600 20px "Barlow Condensed"', '400 18px Barlow', '600 18px Barlow', '400 18px "IBM Plex Mono"', '500 18px "IBM Plex Mono"']
     .map((f) => document.fonts?.load(f).catch(() => null)));
   const f = x.f, s = f.s;
@@ -114,6 +114,12 @@ export async function buildSheet({ x, car, view, water, access, agro, nf, fmtDat
     text(n, xR + 18, y, F.body(400, 17), C.ink);
     text(`${nf(p, p < 10 ? 1 : 0)}%`, xR + COL, y, F.mono(500, 16), C.ink, 'right');
     y += 26;
+  }
+  if (vigor && vigor.ha >= 1 && vigor.wet != null) {   // vigor do pasto (NDVI da Sentinel-2)
+    const LV = ['fraco', 'abaixo da média', 'acima da média', 'forte'];
+    y += 8;
+    y = kv('Vigor do pasto (águas)', `${vigor.lv != null ? `${LV[vigor.lv]} · ` : ''}NDVI ${nf(vigor.wet / 100, 2)}`, xR, y);
+    y = kv('Pasto fraco / forte', `${vigor.weak ?? 0}% / ${vigor.strong ?? 0}% de ${nf(vigor.ha, vigor.ha < 10 ? 1 : 0)} ha`, xR, y);
   }
   y = Math.max(yL1, y) + 22;
 

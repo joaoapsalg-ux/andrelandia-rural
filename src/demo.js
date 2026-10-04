@@ -34,8 +34,10 @@ export class PropertyDemo {
     // os primeiros anos, o mapa de escoamento e o histórico antes de o relógio andar; os outros anos (~16 MB no
     // total, ficam no cache) chegam durante a primeira cena — se faltar algum, a cena dos anos espera
     this.years.forEach((_, i) => this.blobOf(i));
-    await Promise.all([...[0, 1, 2, 3, 4, 5].map((i) => this.blobOf(i)), this.drop.load(), this.carLayer.loadHist(), this.agro?.load().catch(() => null)]);
+    const got = await Promise.all([...[0, 1, 2, 3, 4, 5].map((i) => this.blobOf(i)), this.drop.load(), this.carLayer.loadHist(), this.agro?.load().catch(() => null),
+      this.vigor?.ensure().catch(() => null)]);
     if (this.run !== run) return;
+    run.vig = !!got.at(-1);   // mapa de vigor carregado: entra a cena do pasto
     await Promise.all([this.#want(0), this.#want(1)]);
     if (this.run !== run) return;
     run.scenes = this.#scenes(x);
@@ -154,7 +156,19 @@ export class PropertyDemo {
       } });
     }
 
-    // 3. o relevo: curvas de nível e o ponto mais alto
+    // 3. o pasto: o verde nas águas de 2026 (Sentinel-2), comparado com o pasto do município
+    const V = this.run.vig ? this.vigor.of(x) : null;
+    if (V && V.ha >= 1 && V.wet != null) {
+      const LV = ['fraco', 'abaixo da média', 'acima da média', 'forte'];
+      scenes.push({ d: 4.5, label: 'O pasto', enter: () => {
+        view({ surface: 'vigor', shot: 'top' });
+        this.#caption(V.lv != null ? `Pasto ${LV[V.lv]} nas águas` : 'O verde do pasto nas águas',
+          `${nf(V.ha, V.ha < 10 ? 1 : 0)} ha de pasto · NDVI ${nf(V.wet / 100, 2)} nas águas${V.dry != null ? ` e ${nf(V.dry / 100, 2)} na seca` : ''} · ${V.weak ?? 0}% dele fraco`,
+          'Verde-escuro: muito verde · marrom: pouco verde (Sentinel-2, 2026). "Fraco" e "forte" comparam com o pasto do município.');
+      } });
+    }
+
+    // 4. o relevo: curvas de nível e o ponto mais alto
     scenes.push({ d: 4, label: 'O relevo', enter: () => {
       view({ contours: true, peak: true, shot: 'low' });
       this.#caption(`De ${nf(s.z[0])} a ${nf(s.z[2])} m de altitude`, `Declividade média de ${nf(s.sl)}°, relevo ${relevoOf(s.sl)}` + (s.rd >= 0.05 ? ` · ${nf(s.rd, 1)} km de estradas e caminhos` : ''),

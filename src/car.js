@@ -79,12 +79,54 @@ export const CRITERIA = {
     buckets: [['menos de 5%', '#e9e2cf'], ['5–15%', '#b9d4ea'], ['15–30%', '#7fb2dd'], ['30% ou mais', '#3b7fc0']],
     of: (f) => f.s?.gea != null ? step(f.s.gea, [5, 15, 30]) : -1,
   },
+  vigor: {
+    label: 'Vigor do pasto (águas 2026)',
+    note: 'NDVI médio do pasto de cada propriedade nas águas de 2026 (Sentinel-2), comparado com as outras do município: cada faixa tem ¼ das propriedades com pasto.',
+    buckets: [['fraco', '#b5651d'], ['abaixo da média', '#d9b45a'], ['acima da média', '#8cbf5a'], ['forte', '#2f8a3c'], ['pouco pasto (< 1 ha)', '#c9c4b8']],
+    q: null,   // quartis das propriedades (CarLayer.loadVigor)
+    of: (f) => {
+      const v = f.vg, q = CRITERIA.vigor.q;
+      if (v === undefined || !q) return -1;
+      return !v || v[0] < 1 || v[3] == null ? 4 : step(v[3], q);
+    },
+  },
   situacao: {
     label: 'Situação do cadastro',
     buckets: [['Aguardando ou em análise', '#bdb6a8'], ['Analisado, com notificação', '#ef8a47'], ['Aguardando regularização', '#c2412d'], ['Em conformidade', '#5aa469'], ['Em conformidade, com excedente', '#1d6b3a']],
     of: STATUS,
   },
 };
+
+const VIG_LV = [['fraco', '#b5651d'], ['abaixo da média', '#c9a03a'], ['acima da média', '#6fa84a'], ['forte', '#2f8a3c']];
+const ndvi = (v, nf) => nf(v / 100, 2);
+
+// vigor do pasto ano a ano: linhas cheias = propriedade, tracejadas = pasto do município (NDVI × 100)
+function vigChart(V, M, years, nf, { w = 340, h = 128 } = {}) {
+  const S = [[V.ws, '#2f8a3c', ''], [M.wet, '#2f8a3c', '4 3'], [V.ds, '#c08a3e', ''], [M.dry, '#c08a3e', '4 3']];
+  const all = S.flatMap(([a]) => a).filter((v) => v != null);
+  if (all.length < 3) return '';
+  const lo = Math.floor(Math.min(...all) / 5) * 5 - 5, hi = Math.ceil(Math.max(...all) / 5) * 5 + 5;
+  const pl = 32, pr = 8, pt = 8, pb = 18;
+  const X = (i) => pl + (i / (years.length - 1)) * (w - pl - pr), Y = (v) => pt + (1 - (v - lo) / (hi - lo)) * (h - pt - pb);
+  let g = '';
+  for (const v of [lo, (lo + hi) / 2, hi]) g += `<line x1="${pl}" x2="${w - pr}" y1="${Y(v)}" y2="${Y(v)}" stroke="currentColor" stroke-opacity=".18"/><text x="${pl - 5}" y="${Y(v) + 3}" text-anchor="end">${ndvi(v, nf)}</text>`;
+  years.forEach((y, i) => { g += `<text x="${X(i)}" y="${h - 4}" text-anchor="middle">${String(y).slice(2)}</text>`; });
+  for (const [arr, col, dash] of S) {
+    let run = [];
+    const flush = () => { if (run.length > 1) g += `<polyline points="${run.join(' ')}" fill="none" stroke="${col}" stroke-width="${dash ? 1.4 : 2.2}" stroke-dasharray="${dash}" stroke-linejoin="round"/>`; run = []; };
+    arr.forEach((v, i) => { if (v == null) flush(); else run.push(`${X(i).toFixed(1)},${Y(v).toFixed(1)}`); });
+    flush();
+    if (!dash) arr.forEach((v, i) => { if (v != null) g += `<circle cx="${X(i).toFixed(1)}" cy="${Y(v).toFixed(1)}" r="2.6" fill="${col}"/>`; });
+  }
+  return `<svg class="vig-chart" viewBox="0 0 ${w} ${h}" role="img" aria-label="Vigor do pasto de ${years[0]} a ${years.at(-1)}">${g}</svg>`;
+}
+const mean = (a) => a.reduce((s, v) => s + v, 0) / a.length;
+/** comparação da tendência com a do município: diferença das últimas 3 safras menos a das 3 primeiras (NDVI × 100) */
+function vigTrend(ws, mw) {
+  const d = ws.map((v, i) => (v != null && mw[i] != null ? v - mw[i] : null)).filter((v) => v != null);
+  if (d.length < 4) return null;
+  return mean(d.slice(-3)) - mean(d.slice(0, 3));
+}
 
 const hex2rgb = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
 function inRing(ring, lat, lon) {
@@ -448,10 +490,12 @@ export class CarLayer {
     </header>`;
     if (!s) return h + `<p class="model-note">Propriedade fora da área com dados do mapa.</p>`;
     const partial = s.a / f.ha < 0.9 ? `<p class="cc-warn">A propriedade passa da borda do mapa: os números abaixo valem só para a parte dentro dele (${nf(s.a)} ha).</p>` : '';
-    // abas: o cabeçalho fica sempre; as seções se dividem em Terra · Água · Clima e solo · Vizinhança
-    const tabs = [['terra', 'Terra'], ['agua', 'Água'], ['clima', 'Clima e solo'], ['viz', 'Vizinhança']];
+    // abas: o cabeçalho fica sempre; o resumo junta o principal de cada parte em cartões que levam à aba dela
+    const tabs = [['resumo', 'Resumo'], ['terra', 'Terra'], ['pasto', 'Pasto'], ['agua', 'Água'], ['clima', 'Clima e solo'], ['viz', 'Vizinhança']];
     h += `<nav class="cc-tabs" role="tablist" aria-label="Partes da ficha">${tabs.map(([k, l]) => `<button type="button" role="tab" data-tab-btn="${k}">${l}</button>`).join('')}</nav>`;
     h += partial + '<div class="cc-grid">';
+    h += this.#summary(x);
+    h += this.#pasture(x, chartW);
     // a terra ao longo do tempo
     const hist = this.histOf(x.k);
     if (hist) {
@@ -530,10 +574,94 @@ export class CarLayer {
     return h;
   }
 
+  // resumo: um cartão por parte da ficha (os de clima, solo, acesso e plantio são preenchidos em main.js)
+  #summary(x) {
+    const f = x.f, s = f.s, nf = this.nf, esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+    const tile = (goto, c, k, body, cls = '') => `<button type="button" class="rs${cls}" data-goto="${goto}"><span class="k"><i style="--c:${c}"></i>${k}</span>${body}</button>`;
+    const wait = (id) => `<div class="rs-b" id="${id}"><span class="d">Carregando…</span></div>`;
+    const lu = s.lu.map(([c, p]) => [CLASSES[c]?.[0] ?? `classe ${c}`, CLASSES[c]?.[1] ?? '#999', p]);
+    const bar = `<div class="cc-bar">${lu.map(([n, c, p]) => `<span style="flex:${p} 1 0;background:${c}" title="${esc(n)}: ${nf(p, 1)}%"></span>`).join('')}</div>`;
+    let t = '';
+    t += tile('terra', '#d6bc74', 'Uso hoje', `<span class="v">${nf(lu[0][2])}% <small>${esc(lu[0][0].toLowerCase())}</small></span>${bar}${lu[1] ? `<span class="d">${nf(lu[1][2])}% ${esc(lu[1][0].toLowerCase())}${lu[2] ? ` · ${nf(lu[2][2])}% ${esc(lu[2][0].toLowerCase())}` : ''}</span>` : ''}`);
+    const V = this.vigorOf(x);
+    t += tile('pasto', '#2f8a3c', 'Vigor do pasto', !this.vigor ? '<span class="d">Ainda não disponível.</span>'
+      : !V || V.ha < 1 ? `<span class="v">— <small>pouco pasto</small></span><span class="d">Menos de 1 ha de pasto no MapBiomas 2025.</span>`
+        : `<span class="v">${V.lv != null ? VIG_LV[V.lv][0][0].toUpperCase() + VIG_LV[V.lv][0].slice(1) : ndvi(V.wet, nf)}</span>${V.lv != null ? `<span class="lvl" style="--c:${VIG_LV[V.lv][1]}">NDVI ${ndvi(V.wet, nf)} nas águas</span>` : ''}<span class="d">${nf(V.ha, V.ha < 10 ? 1 : 0)} ha de pasto · ${V.weak ?? 0}% dele fraco</span>`);
+    const [aha, anat] = s.app;
+    t += tile('agua', '#2f8fe0', 'Água', `<span class="v">${nf(s.dr, 1)} km <small>de córregos</small></span><span class="d">${s.nas ?? 0} ${s.nas === 1 ? 'nascente estimada' : 'nascentes estimadas'}${aha >= 0.1 ? ` · APP ${nf(anat)}% com mata ou campo` : ' · sem APP estimada'}</span>`);
+    t += tile('terra', '#b3845c', 'Relevo', `<span class="v">${nf(s.z[0])}–${nf(s.z[2])} <small>m de altitude</small></span><span class="d">${relevoOf(s.sl)[0].toUpperCase() + relevoOf(s.sl).slice(1)}, ${nf(s.sl)}° de declividade média</span>`);
+    if (s.sol) {
+      const ref = this.muni?.sol?.[0], v = s.sol[0];
+      const cmp = !ref ? '' : v > ref * 1.03 ? 'mais sol que a média' : v < ref * 0.97 ? 'menos sol que a média' : 'sol na média';
+      t += tile('clima', '#f79e3b', 'Sol e geada', `<span class="v">${nf(v, 1)} <small>kWh/m² no inverno</small></span><span class="d">${cmp ? `${cmp} · ` : ''}${nf(s.gea)}% em baixada fria</span>`);
+    }
+    t += tile('clima', '#6db3df', 'Clima', wait('rs-clima'));
+    t += tile('clima', '#a0522d', 'Solo provável', wait('rs-solo'));
+    t += tile('viz', '#9aa69e', 'Acesso', wait('rs-acesso'));
+    const nb = this.sel === x ? this.nb : this.neighbors(x), side = nb.filter((n) => !n.ov).length, over = nb.length - side;
+    t += tile('viz', '#e3a008', 'Vizinhos', `<span class="v">${side} <small>${side === 1 ? 'faz divisa' : 'fazem divisa'}</small></span><span class="d">${over ? `${over} ${over === 1 ? 'cadastro sobreposto' : 'cadastros sobrepostos'}` : 'nenhum cadastro sobreposto'}</span>`);
+    t += tile('terra', '#1f8d49', 'Desde 1985', `<span class="v">${nf(s.n85)}% → ${nf(s.n25)}%</span><span class="d">de vegetação nativa (mata, campo, área úmida)</span>`);
+    t += tile('clima', '#3f9d5a', 'Quando plantar com menos risco (ZARC)', wait('rs-zarc'), ' rs--wide');
+    return `<section data-tab="resumo"><div class="rs-grid">${t}</div><p class="rs-note">Toque num cartão para ver os detalhes. Tudo é estimativa feita com dados públicos.</p></section>`;
+  }
+
+  // vigor do pasto: nas águas, na seca e ano a ano, comparado com o pasto do município
+  #pasture(x, chartW) {
+    const nf = this.nf, V = this.vigorOf(x), d = this.vigor;
+    if (!d) return `<section data-tab="pasto"><h3>Vigor do pasto</h3><p class="cc-note">O mapa de vigor ainda não está disponível.</p></section>`;
+    if (!V || V.ha < 1) return `<section data-tab="pasto"><h3>Vigor do pasto</h3><p class="cc-kv">Quase sem pasto nesta propriedade: ${V ? `${nf(V.ha, 1)} ha` : 'nada'} de pastagem no MapBiomas 2025.</p>
+      <button type="button" class="btn btn--small" data-act="vigmap">Ver o vigor no mapa</button></section>`;
+    const M = d.muni, mWet = M.wet.at(-1), mDry = M.dry.at(-1), yrs = d.years;
+    const lv = V.lv != null ? VIG_LV[V.lv] : null;
+    const weak = V.weak ?? 0, strong = V.strong ?? 0, mid = Math.max(0, 100 - weak - strong);
+    let h = `<section data-tab="pasto"><h3>Vigor do pasto nas águas · ${yrs.at(-1)}</h3>
+      <div class="big">${lv ? lv[0][0].toUpperCase() + lv[0].slice(1) : '—'} <small>NDVI ${ndvi(V.wet, nf)}</small></div>
+      <p class="cc-kv">${nf(V.ha, V.ha < 10 ? 1 : 0)} ha de pasto (${nf(V.pct)}% da área) · pasto do município: NDVI <b>${mWet != null ? ndvi(mWet, nf) : '—'}</b></p>
+      <div class="cc-bar vig-bar" role="img" aria-label="${weak}% fraco, ${mid}% médio, ${strong}% forte"><span style="flex:${weak} 1 0"></span><span style="flex:${mid} 1 0"></span><span style="flex:${strong} 1 0"></span></div>
+      <p class="cc-kv"><span class="cc-dot" style="background:#b5651d"></span>${weak}% fraco · <span class="cc-dot" style="background:#c9c06a"></span>${mid}% médio · <span class="cc-dot" style="background:#2f8a3c"></span>${strong}% forte</p>
+      <p class="cc-note">Fraco e forte: entre os 25% de pasto menos e mais verde do município nas águas. ${lv ? `"${lv[0][0].toUpperCase() + lv[0].slice(1)}" compara a média do pasto dela com a das outras propriedades.` : ''}</p>
+      <button type="button" class="btn btn--small" data-act="vigmap">Ver o vigor no mapa</button>
+    </section>`;
+    if (V.dry != null && V.wet > 0) {
+      const r = Math.round((100 * V.dry) / V.wet), rm = mWet && mDry ? Math.round((100 * mDry) / mWet) : null;
+      const cmp = rm == null ? '' : r >= rm + 5 ? 'Segura mais verde na seca que a média do município — pode ter baixada úmida, capineira ou pasto mais fechado.' : r <= rm - 5 ? 'Seca mais que a média do município: vale olhar lotação, solo exposto e encostas viradas para o norte.' : 'Seca parecido com a média do município.';
+      h += `<section data-tab="pasto"><h3>Na seca · jul–set ${yrs.at(-1)}</h3>
+        <p class="cc-kv">NDVI <b>${ndvi(V.dry, nf)}</b>: o pasto guardou <b>${r}%</b> do verde das águas${rm != null ? ` (município: ${rm}%)` : ''}.</p>
+        ${cmp ? `<p class="cc-kv">${cmp}</p>` : ''}
+      </section>`;
+    }
+    const tr = vigTrend(V.ws, M.wet);
+    h += `<section data-tab="pasto"><h3>Ano a ano · ${yrs[0]}–${yrs.at(-1)}</h3>
+      ${vigChart(V, M, yrs, nf, { w: Math.max(280, Math.min(560, chartW)) })}
+      <p class="vig-legend"><span><i style="border-color:#2f8a3c"></i>águas</span><span><i style="border-color:#c08a3e"></i>seca</span><span><i style="border-color:currentColor;border-top-style:dashed"></i>pasto do município</span></p>
+      ${tr == null ? '' : `<p class="cc-kv">${tr >= 3 ? '↗ O pasto dela <b>melhorou</b> em relação ao do município nos últimos anos.' : tr <= -3 ? '↘ O pasto dela <b>piorou</b> em relação ao do município nos últimos anos.' : '→ O pasto dela acompanhou o do município ao longo dos anos.'}</p>`}
+      <p class="cc-note">NDVI da Sentinel-2 (10 m): mede o verde da folhagem, não a quantidade nem a qualidade do capim. A chuva de cada ano, queimada, roçada e lotação mudam o valor — compare com o município (tracejado), não com um número fixo. Pasto = MapBiomas 2025.</p>
+    </section>`;
+    return h;
+  }
+
   /** histórico de 41 anos por propriedade (arquivo à parte, carregado na primeira ficha) */
   loadHist() {
     this.histP ??= this.getJSON('data/muni/layers/car_hist.json').then((d) => { this.hist = d; }).catch(() => { this.histP = null; });
     return this.histP;
+  }
+  /** vigor do pasto (vigor.json, robô "Vigor da pastagem"): números por propriedade e quartis entre as propriedades */
+  loadVigor() {
+    this.vigP ??= Promise.all([this.getJSON('data/muni/layers/vigor.json'), this.load()]).then(([d]) => {
+      this.vigor = d;
+      this.feats.forEach((f, k) => { f.vg = d.p[k] ?? null; });
+      const wets = this.feats.filter((f) => f.mun === 'Andrelândia' && f.vg && f.vg[0] >= 1 && f.vg[3] != null).map((f) => f.vg[3]).sort((a, b) => a - b);
+      const qq = (p) => wets[Math.min(wets.length - 1, Math.floor(p * wets.length))];
+      CRITERIA.vigor.q = wets.length ? [qq(0.25), qq(0.5), qq(0.75)] : null;
+      return d;
+    }).catch(() => { this.vigP = null; return null; });
+    return this.vigP;
+  }
+  /** { ha, pct, weak, strong, wet, dry, ws, ds, lv } (NDVI × 100) ou null */
+  vigorOf(x) {
+    const v = x?.f.vg, q = CRITERIA.vigor.q;
+    if (!v || v.length < 7 || v[3] == null) return v ? { ha: v[0], pct: x.f.s ? (100 * v[0]) / x.f.s.a : 0 } : null;
+    return { ha: v[0], pct: x.f.s ? (100 * v[0]) / x.f.s.a : 0, weak: v[1], strong: v[2], wet: v[3], dry: v[4], ws: v[5], ds: v[6], lv: q ? step(v[3], q) : null };
   }
   histOf(k) {
     const b64 = this.hist?.h[k];

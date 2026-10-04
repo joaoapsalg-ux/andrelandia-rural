@@ -25,7 +25,12 @@ está em `legado/andrelandia3d-v0.8/` (sem os dados).
 ## Estrutura
 
 ```
-index.html            interface + CSS (tokens claro/escuro em :root; fontes Barlow / Barlow Condensed / IBM Plex Mono)
+index.html            interface + CSS (tokens claro/escuro em :root; fontes Barlow / Barlow Condensed / IBM Plex Mono).
+                      Menu à esquerda: barra de ícones (#rail: Propriedade · Mapa · Ferramentas · Lugares · Sobre) +
+                      painel (#pane) com largura ajustável (arrastar a borda; guardada) e recolhível; tudo o que é
+                      texto mora nele (ficha, camadas, gota, perfil, lugar). ≥ 1000 px o mapa começa depois do menu
+                      (--side-w); 701–999 o painel passa por cima; ≤ 700 a barra vai para baixo e o painel vira gaveta
+                      (meia/alta/baixa) e o centro da vista sobe para a parte à mostra (camera.setViewOffset)
 src/main.js           montagem da cena, ferramentas (gota, perfil, antes/depois, sobrevoo), máquina do tempo, painéis
 src/cellterrain.js    terreno em 22×20 células (~2 km), LOD 72/36/18/9, saias, imagens sob demanda; shader com
                       satélite (com correção de cor), uso do solo (mistura de 2 anos), sol, geada, divisória antes/depois,
@@ -53,7 +58,10 @@ tools/dev/shot.js     captura de tela headless (Playwright + SwiftShader) para c
 | Arquivo | O que é |
 |---|---|
 | dem/anadem.png | ANADEM 30 m em PNG Terrarium (R·256 + G + B/256 − 32768), 1671×1522 |
-| img/overview.jpg, img/cbers/t_{ty}_{tx}.jpg, img/town/c_{r}_{c}.jpg | CBERS-4A fundido com cor Sentinel-2: visão geral, 4 m (blocos de 2×2 células), 2 m na cidade |
+| img/town/c_{r}_{c}.webp | 2 m (CBERS-4A 23/07/2026) em 255 células do município (5 do sul ficam fora da cena), ~95 MB, gerados pelo robô "Imagem de 2 m — município"; lista em TOWN_CELLS (grid.js) |
+| img/overview.jpg, img/cbers/t_{ty}_{tx}.jpg | CBERS-4A fundido com cor Sentinel-2: visão geral e 4 m (blocos de 2×2 células) |
+| layers/vigor_{aguas,seca}_2026.webp | NDVI da Sentinel-2 (águas jan–abr p70, seca jul–set mediana), cinza 8 bits na grade do car_id (3072×2993): 0 = sem dado, NDVI = (v − 1)/254 − 0,1 |
+| layers/vigor.json | robô "Vigor da pastagem": anos 2019–2026, datas usadas, pasto do município (quartis, séries) e por propriedade [ha de pasto, % fraco, % forte, NDVI águas, NDVI seca, [águas ano a ano], [seca ano a ano]] (NDVI × 100; pasto = MapBiomas 2025 classe 15) |
 | landuse/lc30_{1985..2025}.png | MapBiomas Col. 11, códigos de classe em cinza 8 bits, mesma grade do ANADEM |
 | landuse/hist.json | % de 6 grupos de uso no município, 41 anos; médias de sol |
 | layers/car.json | 3.726 propriedades (SICAR), contornos simplificados + ficha `s` (uso, relevo, APP, sol, geada…) |
@@ -82,6 +90,20 @@ na pasta Downloads. Os scripts leem os brutos de `ANDRELANDIA_RAW` (padrão `~/D
 Ordem dos scripts: build_muni_tiles → build_muni_vectors → derive_drainage municipio → build_car → build_car_stats →
 build_rural → build_landuse41.
 
+Imagem de 2 m (04/10/2026): `tools/build_cbers2m.py` roda no GitHub Actions (tem GDAL e internet; o navegador esbarra
+no CORS do INPE) e lê só o recorte de cada célula no COG `CB4A-WPM-PCA-FUSED-1` (data.inpe.br). Receita escolhida na
+propriedade de 144 ha ("versão 4"): cor do bloco de 4 m em escala > 50 m (sem emenda) + névoa 0,6 + deconvolução 0,8 +
+contraste local 0,25 + sombras da hora da foto 0,8 (relevo ANADEM, sol às 12:48 UTC) + nitidez leve, WebP 82; encaixe
+suave pela Sentinel-2 de 30/08/2026 (modelo afim de 25 pontos, a CBERS estava 5–9 m a oeste e 0–10 m ao sul).
+Testados e descartados: fusão própria das bandas L4 (pouco ganho; arquivos não otimizados, ~2,7 GB), outras datas
+(borradas ou com a terra diferente), empilhamento de datas, redução de ruído (tira textura), 1 m/px (só pesa).
+O app aplica 35% da nitidez do shader nos blocos de 2 m (`uTileSharp`), que já vêm realçados.
+
+Robôs do GitHub Actions (rodam pelo botão "Run workflow" ou `gh workflow run <arquivo>`; gravam no repositório e
+publicam o site): `imagem-2m-municipio.yml` (células de `tools/municipio_celulas.txt`), `vigor.yml`
+(`tools/build_vigor.py`: STAC do Earth Search, máscara de nuvem pela SCL, 2026 a 10 m e 2019–2025 na visão de 20 m)
+e `imagem-2m.yml` (testes: devolve as imagens como artefato, não publica).
+
 Dados acrescentados em 03/10/2026 sem Python (a máquina não tem): PowerShell + navegador do app.
 - Clima: Open-Meteo Historical Weather API (5 pontos, 1991–2020) → `andrelandia_clima_openmeteo.json` (ERA5-Land) e
   `andrelandia_chuva_openmeteo_era5.json` (ERA5) → `tools/build_clima.ps1`.
@@ -105,7 +127,7 @@ Dados acrescentados em 03/10/2026 sem Python (a máquina não tem): PowerShell +
 ## Conferir mudanças
 
 `node tools/dev/shot.js saida.png 15000 teste.js` com o `serve.py` rodando. `window.app` expõe
-`{ camera, controls, terrain, carLayer, openCarCard, demo, setWater, makeSheet, rain, profile, setSurface, setYearPos, setSplit, startOrbit, setTool }`
+`{ camera, controls, terrain, carLayer, openCarCard, demo, setWater, makeSheet, rain, profile, setSurface, setYearPos, setSplit, startOrbit, setTool, showPane, setCollapsed, loadVigor }`
 (`makeSheet(x)` devolve o PNG sem baixar: bom para conferir a folha).
 SwiftShader roda a ~1 quadro/s: confira estado (DOM, valores) pelo script e use espera longa para a imagem.
 

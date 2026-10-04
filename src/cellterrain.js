@@ -68,6 +68,19 @@ const FRAG = /* glsl */ `
   uniform float uFilm;               // acabamento de cinema (0–1)
   uniform float uSharp, uClarity, uTexel;   // nitidez e clareza da imagem de perto; texel = 1 / lado do bloco
   uniform float uTileSharp;                 // por célula: 1 nos blocos de 4 m, menos nos de 2 m (já realçados)
+  // vigor (NDVI da Sentinel-2, grade da extensão ~15 m): 0 = sem dado; NDVI = (v − 1) / 254 − 0,1
+  uniform sampler2D uNdvi;
+  uniform float uVig;
+
+  // rampa do vigor: marrom (pouco verde) → amarelo → verde → verde-escuro
+  vec3 vigRamp(float t) {
+    vec3 c0 = vec3(0.55, 0.35, 0.18), c1 = vec3(0.79, 0.64, 0.35), c2 = vec3(0.84, 0.83, 0.42), c3 = vec3(0.50, 0.71, 0.31), c4 = vec3(0.18, 0.54, 0.24), c5 = vec3(0.08, 0.35, 0.16);
+    if (t < 0.2) return mix(c0, c1, t / 0.2);
+    if (t < 0.4) return mix(c1, c2, (t - 0.2) / 0.2);
+    if (t < 0.6) return mix(c2, c3, (t - 0.4) / 0.2);
+    if (t < 0.8) return mix(c3, c4, (t - 0.6) / 0.2);
+    return mix(c4, c5, (t - 0.8) / 0.2);
+  }
 
   vec3 ramp(float t) {
     vec3 c0 = vec3(0.47, 0.60, 0.40), c1 = vec3(0.70, 0.73, 0.49), c2 = vec3(0.80, 0.68, 0.47);
@@ -126,7 +139,7 @@ const FRAG = /* glsl */ `
 
     // superfícies (à esquerda da divisória "antes e depois": uso do solo do ano de comparação)
     bool before = uSplit >= 0.0 && gl_FragCoord.x < uSplit;
-    float land = before ? 1.0 : uLand, sat = before ? 0.0 : uSat, sol = before ? 0.0 : uSol, frost = before ? 0.0 : uFrost;
+    float land = before ? 1.0 : uLand, sat = before ? 0.0 : uSat, sol = before ? 0.0 : uSol, frost = before ? 0.0 : uFrost, vig = before ? 0.0 : uVig;
     float t = clamp((vElev - uMin) / (uMax - uMin), 0.0, 1.0);
     vec3 base = mix(uPaper, ramp(t), uHyps);
     vec2 lcUv = vec2(ovUv.x * uLcX.x + uLcX.y, ovUv.y * uLcX.z + uLcX.w);
@@ -143,6 +156,10 @@ const FRAG = /* glsl */ `
     if (sol > 0.5) {
       float kwh = (sol < 1.5 ? sg.r : sg.g) * 255.0 / 25.0;
       base = solRamp(clamp((kwh - uSolR.x) / (uSolR.y - uSolR.x), 0.0, 1.0));
+    }
+    if (vig > 0.5) {   // faixa de NDVI 0,15–0,85 na rampa; sem dado = cinza
+      float nb = texture2D(uNdvi, ovUv).r * 255.0;
+      base = nb < 0.5 ? vec3(0.55) : vigRamp(clamp(((nb - 1.0) / 254.0 - 0.1 - 0.15) / 0.7, 0.0, 1.0));
     }
     vec3 col = base * mix(vec3(1.0), light * 1.05, sol > 0.5 ? 0.35 : 1.0);
     // imagem de satélite: já traz sombras do horário da foto; aplica a luz pela metade + sombra projetada
@@ -165,6 +182,7 @@ const FRAG = /* glsl */ `
     vec3 imgLit = img * mix(vec3(1.0), light * 1.12, 0.5) * mix(1.0, 0.55 + 0.45 * vis, step(0.0, uSunL.y) * uShadow);
     imgLit *= mix(0.25, 1.0, smoothstep(-0.12, 0.08, uSunL.y));   // noite escurece
     col = mix(col, imgLit, sat);
+    if (vig > 0.5) col *= 0.72 + 0.56 * dot(img, vec3(0.299, 0.587, 0.114));   // a textura da imagem (árvores, estradas) por baixo da cor
     if (frost > 0.5) {   // geada: imagem acinzentada e baixadas frias em branco-azulado
       float g = dot(imgLit, vec3(0.3, 0.59, 0.11));
       col = mix(vec3(g * 0.82), imgLit * 0.6, 0.25);
@@ -280,6 +298,7 @@ export class CellTerrain {
       uUpMask: { value: blank }, uUpRect: { value: new THREE.Vector4(0, 0, 1, 1) }, uUpOn: { value: 0 },
       uRel: { value: blank }, uRelX: { value: new THREE.Vector4(1, 0, 1, 0) }, uRelief: { value: 0 }, uFilm: { value: 0 },
       uSharp: { value: 0 }, uClarity: { value: 0 }, uTexel: { value: 1 / 1024 },
+      uNdvi: { value: blank }, uVig: { value: 0 },
     };
     {
       const nw = frame.toLocal(EXTENT.n, EXTENT.w), se = frame.toLocal(EXTENT.s, EXTENT.e);
@@ -577,6 +596,7 @@ export class CellTerrain {
   setBeforeTexture(tex) { this.shared.uLcA.value = this.#nearest(tex); }
   setSplit(px) { this.shared.uSplit.value = px; }
   setSolTexture(tex) { this.shared.uSolG.value = tex; }
+  setVigorTexture(tex) { this.shared.uNdvi.value = tex ?? this.blank; }
   // imóveis do CAR: textura de identificação (cobre a extensão), paleta 64×64 por índice e estado
   setCarTexture(tex) {
     tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter; tex.generateMipmaps = false;
@@ -745,6 +765,7 @@ export class CellTerrain {
       u.uLand.value = surface === 'landuse' ? 1 : 0;
       u.uSol.value = surface === 'sol-inverno' ? 1 : surface === 'sol-verao' ? 2 : 0;
       u.uFrost.value = surface === 'geada' ? 1 : 0;
+      u.uVig.value = surface === 'vigor' ? 1 : 0;
       if (surface === 'geada') u.uSat.value = 1;   // a geada é desenhada sobre a imagem
       if (surface === 'sol-inverno') u.uSolR.value.set(1.6, 5.0);
       if (surface === 'sol-verao') u.uSolR.value.set(6.1, 7.4);
