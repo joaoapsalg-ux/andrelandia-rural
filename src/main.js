@@ -23,6 +23,7 @@ import { RoadAccess, AccessLayer, accessText } from './access.js';
 import { Agro, FEATURED, agroText, bestWindow, zarcStrip, climateChart, phName } from './agro.js';
 import { sunPosition, sunDirection, skyState, SkyDome, compassName } from './sun.js';
 import { Aptitude, aptHTML, CAP, MECH, EROS, CROPS, CONF } from './aptidao.js';
+import { Conference, CHECKS } from './conferencia.js';
 
 const $ = (s) => document.querySelector(s);
 const stage = $('#stage');
@@ -577,6 +578,68 @@ async function start() {
   }
   $('#t-lc10').checked = LC10.on = store.get('lc10') === '1';   // carrega só quando o uso do solo aparece (setSurface)
   $('#t-lc10').addEventListener('change', (e) => setLc10(e.target.checked));
+  // --- conferir o uso do solo com o satélite (conferencia.js) -----------------------------------------------
+  // mapa por cima da imagem com transparência, só as bordas das classes, e as marcas de onde o MapBiomas 2025 não bate
+  // com o verde da Sentinel-2 em 2026 (a cor das marcas usa o encaixe de textura do vigor/aptidão)
+  let conf = null;
+  const LCV = { op: 1, edge: false, conf: false };
+  async function loadConf() {
+    if (!conf) {
+      const d = await carLayer.loadVigor();
+      if (!d) throw new Error('sem o mapa de vigor');
+      conf = new Conference({ G: GRIDS.g30, EXT: EXTENT, lcBlob: () => blobOf(YEARS.length - 1), year: d.years.at(-1), boundary });
+    }
+    return conf.load();
+  }
+  const applyLcView = () => terrain.setLanduseView(LCV);
+  $('#lc-op').addEventListener('input', (e) => { LCV.op = +e.target.value / 100; $('#lc-op-out').textContent = `${e.target.value}%`; applyLcView(); });
+  $('#lc-edge').addEventListener('change', (e) => { LCV.edge = e.target.checked; applyLcView(); });
+  $('#lc-conf').addEventListener('change', (e) => setConf(e.target.checked));
+  async function setConf(on) {
+    LCV.conf = false; applyLcView();
+    if (!on) { $('#conf-legend').innerHTML = ''; return; }
+    $('#conf-state').textContent = 'Cruzando o mapa com o satélite…';
+    try { await loadConf(); } catch { $('#conf-state').textContent = 'Não foi possível conferir (falta o mapa de vigor).'; $('#lc-conf').checked = false; return; }
+    $('#conf-state').textContent = '';
+    if (!$('#lc-conf').checked) return;
+    LCV.conf = true;
+    if (style.surface === 'landuse') { terrain.setAptTexture(conf.texture()); if (tmPos < YEARS.length - 1) setYearPos(YEARS.length - 1); }   // a conferência é de 2025
+    applyLcView();
+    renderConfLegend();
+  }
+  function renderConfLegend(t10 = null) {
+    const km = (v) => `${nf(v / 100, v < 1000 ? 1 : 0)} km²`, B = conf.muniBase, base = [0, B[3], B[9], B[15] + B[12], B[33]];
+    $('#conf-legend').innerHTML = `<div class="conf-leg">${CHECKS.map((c, i) => (!c ? '' : `<div><span class="lc-sw" style="background:${c.c}"></span><span>${c.k}<small>${c.d} · ${nf((100 * conf.muniTot[i]) / Math.max(1, base[i]), 1)}% dessa classe no mapa</small></span><b>${km(conf.muniTot[i])}${t10 ? `<br><small>10 m: ${km(t10[i])}</small>` : ''}</b></div>`)).join('')}</div>
+      <p class="model-note">No município, ${nf((100 * conf.muniTot.slice(1).reduce((a, b) => a + b, 0)) / conf.muniHa, 1)}% da área tem alguma marca. Pode ser mudança real de 2025 para 2026 (corte, colheita, fogo, mata crescendo) ou erro do mapa: a marca aponta onde olhar a foto.</p>
+      ${t10 ? '' : '<button type="button" class="btn btn--small" id="conf-10">Comparar com o mapa de 10 m</button>'}`;
+    $('#conf-10')?.addEventListener('click', async (e) => {
+      e.target.disabled = true; e.target.textContent = 'Carregando o mapa de 10 m…';
+      try { await loadLc10(); renderConfLegend(conf.totals10(LC10.data, LC10.grid, LC10.w, LC10.h)); } catch { e.target.textContent = 'Não foi possível carregar.'; }
+    });
+  }
+  async function showConfCard(x) {
+    const box = $('#cc-conf'), btn = carCard.querySelector('[data-act="conf"]');
+    if (!box) return;
+    if (btn) { btn.disabled = true; btn.textContent = 'Cruzando com o satélite…'; }
+    try { await loadConf(); } catch { box.innerHTML = '<p class="cc-note">Não foi possível conferir (falta o mapa de vigor).</p>'; btn?.remove(); return; }
+    if (carLayer.sel !== x || !box.isConnected) return;
+    const st = conf.statsFor(x.f.rings);
+    const fha = (v) => `${nf(v, v < 10 ? 1 : 0)} ha`, marked = st ? st.flags.slice(1).reduce((a, b) => a + b, 0) : 0;
+    box.innerHTML = !st ? '<p class="cc-note">Fora da área do mapa.</p>'
+      : `<p class="cc-kv"><b>${nf(100 - (100 * marked) / st.ha)}%</b> da área combina com o satélite${marked >= 0.05 ? `; <b>${fha(marked)}</b> não batem:` : '.'}</p>
+        ${marked >= 0.05 ? `<ul class="cc-list">${CHECKS.map((c, i) => (c && st.flags[i] >= 0.05 ? `<li><span class="lc-sw" style="background:${c.c}"></span><span>${c.k}</span><b>${fha(st.flags[i])}</b></li>` : '')).join('')}</ul>` : ''}
+        <p class="cc-note">MapBiomas 2025 (30 m) × verde da Sentinel-2 nas águas e na seca de 2026. Pode ser mudança real (corte, colheita, fogo, mata crescendo) ou erro do mapa: no mapa, as marcas mostram onde olhar a foto.</p>
+        <button type="button" class="btn btn--small" data-act="confmap">Ver as marcas no mapa</button>`;
+    btn?.remove();
+  }
+  /** mostra o uso do solo de 2025 com as marcas da conferência, meio transparente por cima da foto */
+  function confOnMap(x) {
+    $('#s-lc').checked = true; $('#lc-conf').checked = true; $('#lc-op').value = '55'; LCV.op = 0.55; $('#lc-op-out').textContent = '55%';
+    if (style.surface !== 'landuse') setSurface('landuse', { fade: true });
+    setConf(true);
+    if (x) carLayer.select(x, { fit: true });
+    if (mqPhone.matches) setSheet('peek');
+  }
   /** composição do uso do solo de uma propriedade no mapa de 10 m: [[código, %, ha]] (maior primeiro) */
   function lc10Of(x) {
     const { data, w: W, h: H, grid: G } = LC10;
@@ -678,7 +741,10 @@ async function start() {
     if (v === 'aptidao') showApt();
     $('#year-badge').hidden = v !== 'landuse';
     if (SOL[v]) { $('#sol-min').textContent = nf(SOL[v].range[0], 1); $('#sol-max').textContent = nf(SOL[v].range[1], 1); $('#sol-note').textContent = SOL[v].note; }
-    if (v === 'landuse') { if (LC10.on && !LC10.tex) setLc10(true); else setYearPos(tmPos); } else stopPlay();
+    if (v === 'landuse') {
+      if (LCV.conf && conf?.tex) terrain.setAptTexture(conf.tex);   // marcas da conferência (encaixe do vigor/aptidão)
+      if (LC10.on && !LC10.tex) setLc10(true); else setYearPos(tmPos);
+    } else stopPlay();
     if (splitOn) updateSplitLabels();
     store.set('surface', v);
   }
@@ -722,7 +788,8 @@ async function start() {
   const splitEl = $('#split');
   const SURF_NAME = { satellite: 'Satélite hoje', altitude: 'Altitude', vigor: 'Vigor 2026', 'sol-inverno': 'Sol no inverno', 'sol-verao': 'Sol no verão', geada: 'Geada' };
   const splitSel = $('#split-year');
-  splitSel.innerHTML = YEARS.slice(0, -1).map((y, k) => `<option value="${k}">${y}</option>`).join('');
+  // (2025 também: "uso do solo 2025 × satélite de hoje" serve para conferir o mapa com a foto)
+  splitSel.innerHTML = YEARS.map((y, k) => `<option value="${k}">${y}</option>`).join('');
   function updateSplitLabels() {
     splitSel.value = String(beforeIdx);
     $('#split-r').textContent = style.surface === 'landuse' ? `${YEARS[Math.round(tmPos)]} ▸` : `${SURF_NAME[style.surface]} ▸`;
@@ -1285,6 +1352,8 @@ async function start() {
     if (act === 'route') setRoute(routeX === x ? null : x);
     if (act === 'peak') { carLayer.showPeak(); if (mqPhone.matches) setSheet('peek'); }
     if (act === 'lu10') showLu10(x);
+    if (act === 'conf') showConfCard(x);
+    if (act === 'confmap') confOnMap(x);
     if (act === 'vigmap') {   // mostra o mapa de vigor e enquadra a propriedade
       const el = $('#s-vig'); el.checked = true; setSurface('vigor', { fade: true }); carLayer.select(x, { fit: true });
       if (mqPhone.matches) setSheet('peek');

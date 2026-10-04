@@ -193,6 +193,11 @@
   .seg2 input:checked + label { background: var(--accent); color: var(--panel); }
   .seg2 input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: -3px; }
   .seg2--3 { grid-template-columns: repeat(3, 1fr); }
+  .conf-box { display: grid; gap: 8px; padding-top: 10px; border-top: 1px solid var(--panel-line); }
+  .conf-leg { display: grid; gap: 4px; font-size: 12.5px; }
+  .conf-leg div { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: start; }
+  .conf-leg small { display: block; color: var(--ink-soft); font-size: 11.5px; }
+  .conf-leg b { font: 500 11.5px var(--f-data); white-space: nowrap; }
   /* aptidão */
   .apt-modes { display: flex; flex-wrap: wrap; gap: 4px; }
   .apt-modes input { position: absolute; opacity: 0; pointer-events: none; }
@@ -645,6 +650,15 @@
             <div class="tm-years" aria-hidden="true"><span>1985</span><span>1995</span><span>2005</span><span>2015</span><span>2025</span></div>
             <label class="row" for="t-lc10"><span>Mais detalhe em 2025 <small class="dim">(MapBiomas 10 m)</small></span> <input type="checkbox" id="t-lc10"></label>
             <p id="lc10-state" class="model-state" role="status"></p>
+            <div class="conf-box">
+              <span class="group-h">Conferir com o satélite</span>
+              <label class="slider" for="lc-op"><span class="row">Mapa por cima da imagem <output id="lc-op-out" for="lc-op">100%</output></span>
+                <input type="range" id="lc-op" min="0" max="100" step="5" value="100"></label>
+              <label class="row" for="lc-edge"><span>Só as bordas das classes <small class="dim">(sobre a foto)</small></span> <input type="checkbox" id="lc-edge"></label>
+              <label class="row" for="lc-conf"><span>Marcar onde não bate com o satélite <small class="dim">(Sentinel-2, 2026)</small></span> <input type="checkbox" id="lc-conf"></label>
+              <p id="conf-state" class="model-state" role="status"></p>
+              <div id="conf-legend"></div>
+            </div>
             <p id="tm-state" class="model-state" role="status"></p>
             <div class="hist-wrap" id="tm-chart"></div>
             <div class="grp-legend" id="tm-legend"></div>

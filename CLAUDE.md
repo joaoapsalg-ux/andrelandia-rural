@@ -56,6 +56,13 @@ src/aptidao.js        aptidão da terra (protótipo em teste, 05/10/2026): calcu
                       capacidade de uso I–VIII, mecanização/lei, nota 0–100 de 5 culturas, erosão (RUSLE), conflitos;
                       vira chão "Aptidão" (5 modos, cor no encaixe do vigor `uNdvi` + `uApt`), aba "Aptidão" da ficha
                       (com "quanto dá para produzir": APP + Reserva Legal 20% + livre) e a ferramenta "Planejar um talhão"
+src/conferencia.js    conferência do MapBiomas 2025 com o satélite: cruza cada pixel de 30 m com o NDVI da Sentinel-2
+                      (águas e seca de 2026, os mapas do vigor) e marca o que não bate (mata com pouco verde, eucalipto
+                      sem copa, pasto/campo com verde de mata, água com vegetação; limites tirados dos percentis por classe
+                      no município). No painel do uso do solo: transparência do mapa, só as bordas das classes (shader,
+                      `uLcEdge`), marcas (`uConf`, encaixe do vigor/aptidão) e comparação dos totais com o mapa de 10 m;
+                      na ficha (aba Terra): "O mapa confere com o satélite?". 30 m: 3,4% do município marcado; o de 10 m
+                      bate bem mais (pasto com verde de mata: 3 km² × 17 km²)
 src/vectors.js        linhas sobre o relevo (estradas, rios, córregos, limite, correnteza animada)
 src/sun.js            posição do sol e cúpula do céu (SkyDome: degradê pela altura do olhar + brilho do sol)
 src/pois.js, geo.js, heightfield.js, sources/png.js, config.js

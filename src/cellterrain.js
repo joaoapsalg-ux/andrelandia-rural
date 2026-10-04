@@ -44,6 +44,10 @@ const FRAG = /* glsl */ `
   uniform vec4 uLcX, uHgtX;          // extensão (u, v) → textura: (escala u, desloc. u, escala v, desloc. v)
   uniform vec4 uLcFX;                // idem para o uso do solo de 10 m (2025), que ocupa uLc/uLc2 quando uLcFine = 1
   uniform float uLcFine;
+  // conferir o uso do solo com a imagem: transparência do mapa, só as bordas das classes, marcas da conferência
+  // (cor RGBA na grade de 30 m, no encaixe do vigor/aptidão) · uLcTS = tamanho em pixels da textura de uso atual
+  uniform float uLcOp, uLcEdge, uConf;
+  uniform vec2 uLcTS;
   uniform float uTileMix;
   uniform float uMin, uMax, uHyps, uSat, uLand, uContours, uInterval, uDim;
   uniform vec3 uPaper, uInk, uFog;
@@ -152,6 +156,19 @@ const FRAG = /* glsl */ `
     float t = clamp((vElev - uMin) / (uMax - uMin), 0.0, 1.0);
     vec3 base = mix(uPaper, ramp(t), uHyps);
     vec2 lcUv = vec2(ovUv.x * uLcX.x + uLcX.y, ovUv.y * uLcX.z + uLcX.w);
+    float edgeM = 0.0; vec3 edgeC = vec3(1.0);
+    // (derivada fora do "if": dentro de um desvio ela não é garantida)
+    vec2 tp = (uLcFine > 0.5 ? vec2(ovUv.x * uLcFX.x + uLcFX.y, ovUv.y * uLcFX.z + uLcFX.w) : lcUv) * uLcTS, fw = fwidth(tp) * 1.4;
+    if (land > 0.5 && !before && uLcEdge > 0.5) {   // borda: o vizinho do lado é de outra classe (linha fina, ~1,5 px)
+      vec2 f = fract(tp), c0 = floor(tp) + 0.5;
+      float cc = texture2D(uLc, c0 / uLcTS).r;
+      float l = step(0.002, abs(texture2D(uLc, (c0 - vec2(1.0, 0.0)) / uLcTS).r - cc)) * (1.0 - step(fw.x, f.x));
+      float r = step(0.002, abs(texture2D(uLc, (c0 + vec2(1.0, 0.0)) / uLcTS).r - cc)) * step(1.0 - fw.x, f.x);
+      float d = step(0.002, abs(texture2D(uLc, (c0 - vec2(0.0, 1.0)) / uLcTS).r - cc)) * (1.0 - step(fw.y, f.y));
+      float u = step(0.002, abs(texture2D(uLc, (c0 + vec2(0.0, 1.0)) / uLcTS).r - cc)) * step(1.0 - fw.y, f.y);
+      edgeM = max(max(l, r), max(d, u));
+      edgeC = texture2D(uPal, vec2((cc * 255.0 + 0.5) / 256.0, 0.5)).rgb;
+    }
     if (land > 0.5) {
       if (before) {
         base = texture2D(uPal, vec2((texture2D(uLcA, lcUv).r * 255.0 + 0.5) / 256.0, 0.5)).rgb;
@@ -195,6 +212,11 @@ const FRAG = /* glsl */ `
     vec3 imgLit = img * mix(vec3(1.0), light * 1.12, 0.5) * mix(1.0, 0.55 + 0.45 * vis, step(0.0, uSunL.y) * uShadow);
     imgLit *= mix(0.25, 1.0, smoothstep(-0.12, 0.08, uSunL.y));   // noite escurece
     col = mix(col, imgLit, sat);
+    if (land > 0.5 && !before) {   // conferir com a imagem: mapa transparente ou só as bordas; marcas da conferência por cima
+      if (uLcEdge > 0.5) col = mix(imgLit * 0.92, edgeC * 1.1 + 0.08, edgeM);
+      else col = mix(imgLit, col, uLcOp);
+      if (uConf > 0.5) { vec4 cf = texture2D(uNdvi, lcUv); col = mix(col, cf.rgb, cf.a); }
+    }
     if (vig > 0.5) col *= 0.72 + 0.56 * dot(img, vec3(0.299, 0.587, 0.114));   // a textura da imagem (árvores, estradas) por baixo da cor
     if (apt > 0.5) {   // aptidão: cor por cima da imagem apagada (onde a cor é transparente, só a imagem)
       vec4 ac = texture2D(uNdvi, lcUv);
@@ -400,6 +422,7 @@ export class CellTerrain {
       uLc: { value: blank }, uLc2: { value: blank }, uLcA: { value: blank }, uPal: { value: blank }, uSolG: { value: blank }, uHgt: { value: blank },
       uLcX: { value: new THREE.Vector4(1, 0, 1, 0) }, uHgtX: { value: new THREE.Vector4(1, 0, 1, 0) },
       uLcFX: { value: new THREE.Vector4(1, 0, 1, 0) }, uLcFine: { value: 0 },
+      uLcOp: { value: 1 }, uLcEdge: { value: 0 }, uConf: { value: 0 }, uLcTS: { value: new THREE.Vector2(1671, 1522) },
       uSunL: { value: new THREE.Vector3(-0.55, 0.75, -0.35).normalize() },
       uSunCol: { value: new THREE.Color(1, 0.97, 0.92) },
       uSunI: { value: 0.78 }, uAmb: { value: 0.42 }, uShadow: { value: 0 }, uExag: { value: 1 }, uBase: { value: baseElev },
@@ -795,13 +818,25 @@ export class CellTerrain {
     tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter; tex.generateMipmaps = false; tex.needsUpdate = true;
     return tex;
   }
-  setLanduseBlend(a, b, t) { this.shared.uLc.value = this.#nearest(a); this.shared.uLc2.value = this.#nearest(b); this.shared.uLcT.value = t; this.shared.uLcFine.value = 0; }
+  setLanduseBlend(a, b, t) {
+    const u = this.shared;
+    u.uLc.value = this.#nearest(a); u.uLc2.value = this.#nearest(b); u.uLcT.value = t; u.uLcFine.value = 0;
+    if (a.image?.width) u.uLcTS.value.set(a.image.width, a.image.height);
+  }
+  /** conferir o uso do solo com a imagem: op = opacidade do mapa (0–1), edge = só as bordas, conf = marcas da conferência */
+  setLanduseView({ op, edge, conf }) {
+    const u = this.shared;
+    if (op !== undefined) u.uLcOp.value = op;
+    if (edge !== undefined) u.uLcEdge.value = edge ? 1 : 0;
+    if (conf !== undefined) u.uConf.value = conf ? 1 : 0;
+  }
   /** uso do solo de 10 m (2025) no lugar do ano atual: tex = DataTexture (linha 0 = norte), grid = grade dele */
   setLanduseFine(tex, grid) {
     const u = this.shared;
     u.uLc.value = tex; u.uLc2.value = tex; u.uLcT.value = 0;
     u.uLcFX.value = this.#xform(grid, false);
     u.uLcFine.value = 1;
+    u.uLcTS.value.set(tex.image.width, tex.image.height);
   }
   setBeforeTexture(tex) { this.shared.uLcA.value = this.#nearest(tex); }
   setSplit(px) { this.shared.uSplit.value = px; }

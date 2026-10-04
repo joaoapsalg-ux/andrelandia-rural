@@ -550,6 +550,10 @@ export class CarLayer {
       <ul class="cc-list">${list}</ul>
       <div id="cc-lu10"></div>
       <button type="button" class="btn btn--small" data-act="lu10">Comparar com o mapa de 10 m</button>
+    </section>
+    <section data-tab="terra"><h3>O mapa confere com o satélite?</h3>
+      <div id="cc-conf"><p class="cc-note">Cruza o MapBiomas 2025 com o verde medido pela Sentinel-2 em 2026 (águas e seca) e aponta o que não bate.</p></div>
+      <button type="button" class="btn btn--small" data-act="conf">Conferir com o satélite</button>
     </section>`;
     // relevo
     const pctSl = Math.tan((s.sl * Math.PI) / 180) * 100;
