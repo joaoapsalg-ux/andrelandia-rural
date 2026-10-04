@@ -188,13 +188,14 @@ export class CarLayer {
             float dist = abs(vH - (0.30 + 0.19 * float(i) - sag));
             wire = max(wire, 1.0 - smoothstep(px * (0.55 + barb * 0.9), px * (1.5 + barb * 1.2), dist));
           }
-          wire *= uNear;                                       // de longe os fios somem e fica só a faixa de luz
-          float glow = (0.10 + 0.32 * (1.0 - uNear)) * pow(1.0 - vH, 2.4);
-          // uma luz correndo pelo fio de cima (uma volta a cada ~12 s)
+          wire *= uNear;                                       // de longe os fios de baixo somem
+          float glow = (0.16 + 0.26 * (1.0 - uNear)) * pow(1.0 - vH, 1.8);   // faixa de luz na base: marca a divisa de longe
+          // fio de cima mais forte (≥ 1,5 px em qualquer distância) e uma luz correndo por ele (uma volta a cada ~12 s)
           float r = fract(vD / uLen - uTime / 12.0), run = pow(max(0.0, 1.0 - min(r, 1.0 - r) * 18.0), 3.0);
-          float top = 1.0 - smoothstep(px * 0.6, px * 1.8, abs(vH - (0.87 - sag)));
-          vec3 c = mix(uGlow, uWire * (0.85 + 0.25 * vH), wire) + vec3(1.0, 0.78, 0.4) * run * top * 0.9;
-          float a = max(max(wire * 0.95, glow), run * top);
+          float top = 1.0 - smoothstep(px * 0.9, px * 2.2, abs(vH - (0.87 - sag * uNear)));
+          vec3 c = mix(uGlow, uWire * (0.85 + 0.25 * vH), wire);
+          c = mix(c, vec3(1.0, 0.97, 0.9), top * (1.0 - uNear) * 0.6) + vec3(1.0, 0.78, 0.4) * run * top * 0.9;
+          float a = max(max(wire * 0.95, glow), top * (0.55 + 0.4 * (1.0 - uNear) + 0.4 * run));
           if (a < 0.01) discard;
           gl_FragColor = vec4(c, uOpacity * a);
         }`,
@@ -390,18 +391,20 @@ export class CarLayer {
     u.uNear.value = near;
     this.postMat.opacity = this.dim * near;
     this.posts.visible = near > 0.03;
-    // de perto a própria cerca marca a divisa: o contorno branco (que flutua alguns metros acima) quase some
+    // bem de perto (< ~500 m) a própria cerca marca a divisa: o contorno branco (que flutua alguns metros acima) quase some
     const sel = this.vectors.batches.find((b) => b.key === 'car-sel');
-    if (sel) sel.mat.opacity = 1 - 0.85 * near * Math.min(1, Math.max(0, (16 - H) / 8));
-    if (this.fenceH && Math.abs(H - this.fenceH) / this.fenceH < 0.08) return;
-    this.fenceH = H;
+    if (sel) sel.mat.opacity = 1 - 0.85 * Math.min(1, Math.max(0, (9 - H) / 4));
+    // mourão com pelo menos ~2 px de largura na tela (de média distância o tamanho "real" ficava menor que um pixel)
+    const mPerPx = (2 * dist * Math.tan((camera.fov * Math.PI) / 360)) / (this.screenH || 800);
+    const rad = Math.min(3, Math.max(0.12, H * 0.035, mPerPx * 1.0));
+    if (this.fenceH && Math.abs(H - this.fenceH) / this.fenceH < 0.08 && Math.abs(rad - this.postRad) / this.postRad < 0.15) return;
+    this.fenceH = H; this.postRad = rad;
     let S = Math.min(140, Math.max(6, H * 2.4));
     const total = u.uLen.value;
     if (total / S > this.posts.instanceMatrix.count - 8) S = total / (this.posts.instanceMatrix.count - 8);
     u.uHeight.value = H; u.uPost.value = S;
     // mourões a cada S metros ao longo de cada anel (a distância segue a mesma conta do pano, então caem nos "vãos" certos)
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3();
-    const rad = Math.min(1.6, Math.max(0.12, H * 0.035));
     let n = 0;
     for (const pts of this.fenceLines) {
       let k = 0;
@@ -542,6 +545,7 @@ export class CarLayer {
   }
   #clearLabels() { this.labelItems = []; for (const el of this.labelPool) el.hidden = true; }
   projectLabels(camera, w, h) {
+    this.screenH = h;   // altura da tela (largura mínima dos mourões)
     // os itens vêm do mais perto do centro para o mais longe: um rótulo que encostaria num já posto fica escondido
     const v = new THREE.Vector3(), placed = [];
     for (const it of this.labelItems) {
