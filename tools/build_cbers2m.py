@@ -54,7 +54,14 @@ def main():
     ap.add_argument('--gain', type=float, default=1.0, help='multiplica o ganho automático')
     ap.add_argument('--tag', default='')
     ap.add_argument('--mode', default='puro', choices=['detalhe', 'puro'], help='detalhe: cor atual + detalhe dos 2 m · puro: 2 m inteira, cor casada')
+    ap.add_argument('--size', type=int, default=1024, help='lado do bloco em px (1024 ≈ 2 m, 2048 ≈ 1 m)')
+    ap.add_argument('--order', type=int, default=1, help='interpolação ao reprojetar: 1 linear, 3 bicúbica')
+    ap.add_argument('--unsharp', type=float, default=0.0, help='nitidez aplicada no arquivo (0 = nenhuma)')
+    ap.add_argument('--quality', type=int, default=85)
     a = ap.parse_args()
+    global TS
+    TS = a.size
+    sk = TS / 1024   # os raios dos filtros acompanham o tamanho do bloco
     os.makedirs(a.out, exist_ok=True)
     os.environ.setdefault('GDAL_DISABLE_READDIR_ON_OPEN', 'EMPTY_DIR')
     os.environ.setdefault('GDAL_HTTP_MULTIRANGE', 'YES')
@@ -72,7 +79,7 @@ def main():
             wt = ds.window_transform(win)
             cols = (X - wt.c) / wt.a - 0.5
             rows = (Y - wt.f) / wt.e - 0.5
-            hi = np.stack([map_coordinates(src[k], [rows, cols], order=1, mode='nearest') for k in range(3)], -1)
+            hi = np.stack([map_coordinates(src[k], [rows, cols], order=a.order, mode='nearest', prefilter=a.order > 1) for k in range(3)], -1)
             valid = hi.sum(-1) > 0
             base = base_tile(r, c)
             L2, LB = lum(hi), lum(base)
@@ -89,16 +96,18 @@ def main():
                     s, b = hi[..., k][valid], base[..., k][valid]
                     out[..., k] = (hi[..., k] - s.mean()) / max(s.std(), 1e-3) * b.std() + b.mean()
                 for k in range(3):
-                    out[..., k] += gaussian_filter(base[..., k], 25) - gaussian_filter(out[..., k], 25)
+                    out[..., k] += gaussian_filter(base[..., k], 25 * sk) - gaussian_filter(out[..., k], 25 * sk)
                 # onde a cena não cobre, o bloco de 4 m, com transição suave de ~60 m
-                fv = np.clip((gaussian_filter(valid.astype(np.float32), 15) - 0.5) * 2 + 0.5, 0, 1) * valid
+                fv = np.clip((gaussian_filter(valid.astype(np.float32), 15 * sk) - 0.5) * 2 + 0.5, 0, 1) * valid
                 out = out * fv[..., None] + base * (1 - fv[..., None])
+                if a.unsharp:   # nitidez no próprio arquivo (máscara de desfoque, raio ~1 px de 2 m)
+                    out = out + a.unsharp * (out - np.stack([gaussian_filter(out[..., j], 0.9 * sk) for j in range(3)], -1))
                 out = np.clip(out, 0, 255).astype(np.uint8)
             else:
                 low = np.stack([gaussian_filter(base[..., k], 0.8) for k in range(3)], -1)
                 out = np.clip(low + gain * detail[..., None], 0, 255).astype(np.uint8)
             name = f'c_{r}_{c}{a.tag}.jpg'
-            Image.fromarray(out).save(os.path.join(a.out, name), quality=85, optimize=True, progressive=True)
+            Image.fromarray(out).save(os.path.join(a.out, name), quality=a.quality, optimize=True, progressive=True)
             print(f'{name}: janela {int(win.width)}x{int(win.height)} px, válido {valid.mean() * 100:.0f}%, ganho {gain:.2f}, {time.time() - t0:.1f} s')
 
 

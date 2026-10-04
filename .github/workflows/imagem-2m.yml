@@ -9,6 +9,9 @@ on:
       cells:
         description: 'Células r_c separadas por vírgula'
         default: '6_11,6_12,7_11,7_12'
+      variants:
+        description: 'Versões, uma por linha de "tag: opções" (ex.: "_b: --order 3 --unsharp 0.4 --quality 92")'
+        default: ': '
 
 permissions:
   contents: read
@@ -22,8 +25,16 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install --quiet rasterio numpy scipy pillow
-      - name: Ler o recorte de 2 m e fundir
-        run: python tools/build_cbers2m.py --cells "${{ inputs.cells }}" --out out2m
+      - name: Ler o recorte de 2 m e fundir (uma passada por versão)
+        env:
+          CELLS: ${{ inputs.cells }}
+          VARIANTS: ${{ inputs.variants }}
+        run: |
+          printf '%s\n' "$VARIANTS" | tr ';' '\n' | while IFS=: read -r tag opts; do
+            [ -z "$tag$opts" ] && continue
+            echo "== versão '${tag}': ${opts}"
+            python tools/build_cbers2m.py --cells "$CELLS" --out out2m --tag "$tag" $opts
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: imagem-2m
