@@ -73,13 +73,60 @@ def inspect_l4(cells):
                   f'compressão {ds.compression} overviews {ovr} · recorte de {len(cells.split(","))} células ≈ {tot / 1e6:.0f} MB (sem compressão)')
 
 
+def sample_window(ds, band, X, Y, order):
+    """lê de ds a janela que cobre as coordenadas (X, Y) e amostra a banda nelas"""
+    win = from_bounds(X.min() - 40, Y.min() - 40, X.max() + 40, Y.max() + 40, ds.transform).round_offsets().round_lengths()
+    src = ds.read(band, window=win, boundless=True, fill_value=0).astype(np.float32)
+    wt = ds.window_transform(win)
+    return map_coordinates(src, [(Y - wt.f) / wt.e - 0.5, (X - wt.c) / wt.a - 0.5], order=order, mode='nearest', prefilter=order > 1)
+
+
+def match_to_base(img, base, valid, sk):
+    """contraste de cada cor casado com o bloco atual e cor em escala > ~50 m trocada pela dele (sem emenda)"""
+    out = img.copy()
+    for k in range(3):
+        s, b = img[..., k][valid], base[..., k][valid]
+        out[..., k] = (img[..., k] - s.mean()) / max(s.std(), 1e-3) * b.std() + b.mean()
+        out[..., k] += gaussian_filter(base[..., k], 25 * sk) - gaussian_filter(out[..., k], 25 * sk)
+    fv = np.clip((gaussian_filter(valid.astype(np.float32), 15 * sk) - 0.5) * 2 + 0.5, 0, 1) * valid
+    return out * fv[..., None] + base * (1 - fv[..., None])
+
+
+def run_l4(a, sk):
+    """fusão própria a partir das bandas originais: pancromática 2 m (BAND0) + vermelho/verde/azul 8 m (BAND3/2/1)"""
+    os.environ.setdefault('GDAL_CACHEMAX', '1500')   # as linhas lidas para uma célula servem à vizinha da mesma fileira
+    with rasterio.open(L4.format(0)) as pan, rasterio.open(L4.format(3)) as rr, rasterio.open(L4.format(2)) as gg, rasterio.open(L4.format(1)) as bb:
+        for cell in a.cells.split(','):
+            r, c = map(int, cell.split('_'))
+            t0 = time.time()
+            LON, LAT = cell_grid(r, c)
+            X, Y = transform('EPSG:4326', pan.crs, LON.ravel().tolist(), LAT.ravel().tolist())
+            X = np.array(X).reshape(TS, TS); Y = np.array(Y).reshape(TS, TS)
+            P = sample_window(pan, 1, X, Y, a.order)
+            ms = np.stack([sample_window(d, 1, X, Y, 3) for d in (rr, gg, bb)], -1)
+            valid = (P > 0) & (ms.sum(-1) > 0)
+            base = base_tile(r, c)
+            Plow = gaussian_filter(P, 1.6 * sk)   # a pancromática vista como se fosse de 8 m
+            outs = {
+                '': ms * (P / np.maximum(Plow, 1.0))[..., None],                              # razão
+                '_hpf': ms + (P - Plow)[..., None] * (ms.mean() / max(P.mean(), 1.0)),         # passa-alta
+            }
+            for suf, img in outs.items():
+                out = match_to_base(img, base, valid, sk)
+                if a.unsharp:
+                    out = out + a.unsharp * (out - np.stack([gaussian_filter(out[..., j], 0.9 * sk) for j in range(3)], -1))
+                name = f'c_{r}_{c}{a.tag}{suf}.jpg'
+                Image.fromarray(np.clip(out, 0, 255).astype(np.uint8)).save(os.path.join(a.out, name), quality=a.quality, optimize=True, progressive=True)
+            print(f'c_{r}_{c}{a.tag}: válido {valid.mean() * 100:.0f}%, {time.time() - t0:.1f} s')
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--cells', required=True)
     ap.add_argument('--out', default='data/muni/img/town')
     ap.add_argument('--gain', type=float, default=1.0, help='multiplica o ganho automático')
     ap.add_argument('--tag', default='')
-    ap.add_argument('--mode', default='puro', choices=['detalhe', 'puro'], help='detalhe: cor atual + detalhe dos 2 m · puro: 2 m inteira, cor casada')
+    ap.add_argument('--mode', default='puro', choices=['detalhe', 'puro', 'l4'], help='detalhe: cor atual + detalhe dos 2 m · puro: 2 m inteira, cor casada · l4: fusão própria das bandas originais')
     ap.add_argument('--size', type=int, default=1024, help='lado do bloco em px (1024 ≈ 2 m, 2048 ≈ 1 m)')
     ap.add_argument('--order', type=int, default=1, help='interpolação ao reprojetar: 1 linear, 3 bicúbica')
     ap.add_argument('--unsharp', type=float, default=0.0, help='nitidez aplicada no arquivo (0 = nenhuma)')
@@ -92,6 +139,8 @@ def main():
     TS = a.size
     sk = TS / 1024   # os raios dos filtros acompanham o tamanho do bloco
     os.makedirs(a.out, exist_ok=True)
+    if a.mode == 'l4':
+        return run_l4(a, sk)
     os.environ.setdefault('GDAL_DISABLE_READDIR_ON_OPEN', 'EMPTY_DIR')
     os.environ.setdefault('GDAL_HTTP_MULTIRANGE', 'YES')
     with rasterio.Env(), rasterio.open(COG) as ds:
