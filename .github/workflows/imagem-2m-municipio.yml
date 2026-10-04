@@ -58,6 +58,7 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A data/muni/img/town data/muni/grid.js
           git commit -m 'Imagem de 2 m (CBERS-4A) para o município inteiro' || exit 0
+          git pull --rebase
           git push
       - name: Publicar o site
         env:

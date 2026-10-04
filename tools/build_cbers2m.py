@@ -275,7 +275,7 @@ def run_stack(a, sk):
         stack, shifts = [], []
         for img in imgs:
             v = img.sum(-1) > 0
-            if v.mean() < 0.5: continue
+            if v.mean() < (0.02 if img is ref else 0.5): continue   # a 1ª data vale mesmo cobrindo só parte da célula
             if img is not ref:
                 dy, dx = register(refL, lum(img))
                 shifts.append(f'{dy:+.2f},{dx:+.2f}')
@@ -285,6 +285,9 @@ def run_stack(a, sk):
             for k in range(3):   # cores de cada data iguais às da primeira
                 img[..., k] = (img[..., k] - img[..., k][m].mean()) / max(img[..., k][m].std(), 1e-3) * ref[..., k][m].std() + ref[..., k][m].mean()
             stack.append(img)
+        if not stack:   # célula fora da cena: fica a imagem de 4 m
+            print(f'c_{r}_{c}: fora da cena, fica a de 4 m')
+            continue
         med = np.median(np.stack(stack), 0)
         if len(stack) > 1:
             # a primeira data (a mais recente) manda: as outras só entram onde mostram o mesmo (tiram ruído e névoa);
