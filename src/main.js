@@ -84,7 +84,7 @@ async function start() {
   });
   terrain.setExaggeration(parseFloat($('#exag').value));
   terrain.setClipPolygon(boundary.ring);
-  terrain.setClip(store.get('clip') === '1');
+  terrain.setClip((store.get('clip') ?? '1') === '1');   // "Mostrar só o município" vem ligado (quem desligou, fica desligado)
   scene.add(terrain.group);
   function applyTheme() { terrain.setStyle({ paper: cssVar('--relief-paper'), ink: cssVar('--contour'), wall: cssVar('--skirt') }); }
   scene.fog = new THREE.Fog(0xd6ddd9, terrain.shared.uFogNear.value, terrain.shared.uFogFar.value);
