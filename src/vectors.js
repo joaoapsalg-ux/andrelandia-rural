@@ -30,6 +30,41 @@ const DIM_FADE = { car: 0.65, roads: 0.45, water: 0.35, drainage: 0.45, flow: 0.
 // distância câmera→alvo (m) acima da qual a classe some
 const MINOR_LIMIT = { 'flow-s': 9000, 'flow-m': 20000, drain1: 7000, drain2: 12000, drain3: 20000, residential: 14000, service: 9000, path: 9000, unclassified: 26000 };
 
+// de noite as linhas ficam mais apagadas (as luzes da cidade é que aparecem)
+const NIGHT_FADE = { car: 0.78, roads: 0.65, water: 0.35, drainage: 0.5, flow: 0.15, boundary: 0.4 };
+
+// água viva: rios e córregos refletem o céu (uTint) e piscam brilhos ao longo da linha; a correnteza vira "cometas"
+// (cabeça clara na frente, cauda que some). Usa vLineDistance da LineMaterial: as linhas de água ficam "tracejadas"
+// com um traço do tamanho do mundo, só para ter a distância ao longo da linha no shader.
+export const WATER = { uTime: { value: 0 }, uTint: { value: new THREE.Color('#bfe3ff') }, uGlint: { value: 0.6 } };
+function waterShader(mat) {
+  mat.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, WATER);
+    sh.fragmentShader = sh.fragmentShader
+      .replace('uniform vec3 diffuse;', 'uniform vec3 diffuse;\nuniform float uTime, uGlint;\nuniform vec3 uTint;')
+      .replace('gl_FragColor = vec4( diffuseColor.rgb, alpha );', `
+        float across = 1.0 - abs(vUv.x);
+        vec3 wc = mix(diffuseColor.rgb, uTint, 0.3);
+        float tw = sin(vLineDistance * 0.08 + sin(vLineDistance * 0.0107) * 5.0 + uTime * 2.0) * sin(vLineDistance * 0.031 - uTime * 1.2);
+        float glint = pow(max(tw, 0.0), 8.0) * smoothstep(0.15, 1.0, across);
+        wc = mix(wc * 0.78, wc * 1.12, across) + (vec3(0.45) + uTint * 0.5) * glint * uGlint;
+        gl_FragColor = vec4(wc, alpha);`);
+  };
+  mat.customProgramCacheKey = () => 'water-line';
+}
+function cometShader(mat) {
+  mat.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, WATER);
+    sh.fragmentShader = sh.fragmentShader
+      .replace('uniform vec3 diffuse;', 'uniform vec3 diffuse;\nuniform vec3 uTint;')
+      .replace('if ( mod( vLineDistance + dashOffset, dashSize + gapSize ) > dashSize ) discard; // todo - FIX',
+        'float dm = mod( vLineDistance + dashOffset, dashSize + gapSize );\nif ( dm > dashSize ) discard;\nfloat headT = dm / dashSize;')
+      .replace('float alpha = opacity;', 'float alpha = opacity * smoothstep(0.0, 0.7, headT) * (0.3 + 0.7 * headT) * (0.55 + 0.45 * (1.0 - abs(vUv.x)));')
+      .replace('gl_FragColor = vec4( diffuseColor.rgb, alpha );', 'gl_FragColor = vec4( mix(diffuseColor.rgb, uTint, 0.25) * (0.85 + 0.3 * headT), alpha );');
+  };
+  mat.customProgramCacheKey = () => 'flow-line';
+}
+
 function densify(latlons, frame, step = 12) {
   const out = [];
   for (let k = 0; k < latlons.length; k++) {
@@ -90,10 +125,14 @@ export class VectorLayers {
 
   #makeBatch(b) {
     {
+      const water = (b.layer === 'water' || b.layer === 'drainage') && !b.style.flow;
+      if (water) b = { ...b, style: { ...b.style, dashed: true, dashSize: 1e7, gapSize: 1 } };
       const mat = new LineMaterial({
         color: b.style.color, linewidth: b.style.width, transparent: true, opacity: b.style.opacity ?? 0.95,
         dashed: !!b.style.dashed, dashSize: b.style.dashSize ?? 14, gapSize: b.style.gapSize ?? 10, worldUnits: false, fog: true,
       });
+      if (water) waterShader(mat);
+      else if (b.style.flow) cometShader(mat);
       this.materials.push(mat);
       const geo = new LineSegmentsGeometry();
       const mesh = new LineSegments2(geo, mat);
@@ -195,15 +234,28 @@ export class VectorLayers {
 
   // correnteza: os traços andam rio abaixo (as linhas da drenagem vão da nascente para a foz)
   animate(dt) {
+    WATER.uTime.value = (WATER.uTime.value + dt) % 10000;
     for (const b of this.batches) if (b.style.flow && b.mesh.visible) b.mat.dashOffset = (b.mat.dashOffset - dt * b.style.flow) % (b.mat.dashSize + b.mat.gapSize);
   }
 
   setVisible(layer, v) { if (this.sublayers[layer]) this.sublayers[layer].visible = v; }
 
   // linhas mais apagadas enquanto uma propriedade está escolhida (k: 0–1)
-  dim = 0; far = 0;
+  dim = 0; far = 0; night = 0;
   setDim(k) { this.dim = k; for (const b of this.batches) this.#applyDim(b); }
-  #applyDim(b) { b.mat.opacity = (b.style.opacity ?? 0.95) * (1 - this.dim * (DIM_FADE[b.layer] ?? 0)) * (b.layer === 'car' ? 1 - 0.6 * this.far : 1); }
+  /** noite (0–1): linhas mais apagadas */
+  setNight(k) {
+    k = Math.round(k * 20) / 20;
+    if (k === this.night) return;
+    this.night = k;
+    for (const b of this.batches) this.#applyDim(b);
+  }
+  /** cor do céu refletida na água e força dos brilhos */
+  setWaterLight(tint, glint) { WATER.uTint.value.copy(tint); WATER.uGlint.value = glint; }
+  #applyDim(b) {
+    b.mat.opacity = (b.style.opacity ?? 0.95) * (1 - this.dim * (DIM_FADE[b.layer] ?? 0)) * (b.layer === 'car' ? 1 - 0.6 * this.far : 1)
+      * (1 - this.night * (NIGHT_FADE[b.layer] ?? 0));
+  }
 
   // detalhe por distância: vias locais e córregos pequenos só aparecem de perto
   setViewDistance(d) {

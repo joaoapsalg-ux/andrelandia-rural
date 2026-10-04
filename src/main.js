@@ -10,7 +10,7 @@ import { POILayer } from './pois.js';
 import { VectorLayers } from './vectors.js';
 import { loadPNG } from './sources/png.js';
 import MODELS from '../data/muni/models.js';
-import { IMAGERY_SETS } from '../data/muni/grid.js';
+import { IMAGERY_SETS, EXTENT } from '../data/muni/grid.js';
 import MANUAL_POIS from '../data/pois.js';
 import { LANDUSE_LAYERS, GRIDS, CLASSES } from '../data/muni/landuse.js';
 import { CarLayer, CRITERIA, histChart, GROUP_COLORS } from './car.js';
@@ -302,16 +302,113 @@ async function start() {
     sky.set(st, dir);
     scene.fog.color.copy(st.horizon);
     terrain.setStyle({ fog: st.horizon });
+    // hora mágica, neblina da manhã nas baixadas e noite
+    const sm = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+    const el = pos.elevation, morning = min >= 240 && min < 720;
+    const mist = $('#t-mist').checked && morning ? (1 - sm(4, 19, el)) * sm(-8, -2, el) : 0;
+    terrain.setAtmosphere({ gold: st.gold, mist, night: st.night });
+    vectors.setNight(st.night);
+    vectors.setWaterLight(new THREE.Color('#9fd0f5').lerp(st.horizon, 0.55), (0.35 + 0.75 * st.gold) * (1 - 0.8 * st.night));
+    if (st.night > 0) setTimeout(() => ensureLights().catch((e) => { lightsP = null; console.warn('luzes', e); }), 0);
     lightUI.out.textContent = `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
     lightUI.sun.textContent = pos.elevation > 0 ? `Sol a ${nf(pos.elevation)}° de altura, a ${compassName(pos.azimuth)}` : pos.elevation > -6 ? 'Crepúsculo' : 'Noite';
     store.set('timeMin', String(min));
   }
   lightUI.time.addEventListener('input', applySun);
+  // atalhos de hora: a régua anda suave até a hora pedida (o céu e a luz acompanham)
+  let timeAnim = null;
+  function goToMinute(target) {
+    const from = parseInt(lightUI.time.value, 10), t0 = performance.now();
+    cancelAnimationFrame(timeAnim);
+    const step = (now) => {
+      const k = Math.min(1, (now - t0) / 1400), e = k < 0.5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2;
+      lightUI.time.value = String(Math.round((from + (target - from) * e) / 5) * 5);
+      applySun();
+      if (k < 1) timeAnim = requestAnimationFrame(step);
+    };
+    timeAnim = requestAnimationFrame(step);
+  }
+  // primeiro minuto do dia (a partir de "from") em que o sol cumpre a condição
+  function sunMinute(from, to, test) {
+    for (let m = from; m <= to; m += 2) {
+      const d = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0) + (m + 180) * 60000);
+      if (test(sunPosition(d, config.region.origin.lat, config.region.origin.lon).elevation)) return m;
+    }
+    return from;
+  }
   $('#time-now').addEventListener('click', () => {
     const now = new Date(Date.now() - 3 * 3600000);
-    lightUI.time.value = now.getUTCHours() * 60 + now.getUTCMinutes();
-    applySun();
+    goToMinute(now.getUTCHours() * 60 + now.getUTCMinutes());
   });
+  $('#time-dawn').addEventListener('click', () => goToMinute(sunMinute(240, 600, (e) => e > 3)));    // sol nascendo: neblina nas baixadas
+  $('#time-gold').addEventListener('click', () => goToMinute(sunMinute(720, 1200, (e) => e < 6)));   // sol a ~6° da tarde
+  $('#time-night').addEventListener('click', () => goToMinute(21 * 60 + 30));
+  {
+    const mistBox = $('#t-mist');
+    mistBox.checked = (store.get('mist') ?? '1') === '1';
+    mistBox.addEventListener('change', () => { store.set('mist', mistBox.checked ? '1' : '0'); applySun(); });
+  }
+
+  // luzes da noite (feitas na primeira vez que escurece): a mancha urbana do MapBiomas 2025 (classe 24) salpicada de
+  // casas, os postes ao longo das ruas que passam por ela e grupinhos de luz nos povoados. R = pontos, G = halo.
+  let lightsP = null;
+  function ensureLights() {
+    lightsP ??= (async () => {
+      const E = EXTENT, { W, H } = terrain.lightsSize;   // mesma grade da máscara do limite (as luzes vão no R/G dela)
+      const px = (lat, lon) => [((lon - E.w) / (E.e - E.w)) * W, ((E.n - lat) / (E.n - E.s)) * H];
+      const bmp = await createImageBitmap(await blobOf(YEARS.length - 1), { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
+      const c0 = document.createElement('canvas'); c0.width = bmp.width; c0.height = bmp.height;
+      const g0 = c0.getContext('2d', { willReadFrequently: true }); g0.drawImage(bmp, 0, 0);
+      const lc = g0.getImageData(0, 0, bmp.width, bmp.height).data, G = GRIDS.g30;
+      const urban = (lat, lon) => {
+        const i = Math.floor((lon - G.lon0) / G.d), j = Math.floor((G.lat0 - lat) / G.d);
+        return i >= 0 && j >= 0 && i < G.w && j < G.h && lc[(j * G.w + i) * 4] === 24;
+      };
+      let seed = 7;
+      const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+      const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+      const g = cv.getContext('2d', { willReadFrequently: true });
+      g.fillStyle = '#000'; g.fillRect(0, 0, W, H);
+      g.globalCompositeOperation = 'lighter';
+      const dot = (x, y, a, s = 1) => { g.fillStyle = `rgba(255,255,255,${a})`; g.fillRect(x - s / 2, y - s / 2, s, s); };
+      // casas na mancha urbana
+      for (let j = 0; j < G.h; j++) for (let i = 0; i < G.w; i++) {
+        if (lc[(j * G.w + i) * 4] !== 24) continue;
+        const [x, y] = px(G.lat0 - (j + 0.5) * G.d, G.lon0 + (i + 0.5) * G.d);
+        for (let k = 0; k < 2; k++) if (rnd() < 0.4) dot(x + (rnd() - 0.5) * 2.2, y + (rnd() - 0.5) * 2.2, 0.2 + 0.4 * rnd());
+      }
+      // postes nas ruas dentro da mancha urbana (a cada ~25 m)
+      for (const f of osm.features) {
+        if (f.kind !== 'highway') continue;
+        for (const line of f.geom) for (let k = 0; k < line.length - 1; k++) {
+          const [la0, lo0] = line[k], [la1, lo1] = line[k + 1];
+          const len = Math.hypot((la1 - la0) * 110574, (lo1 - lo0) * 103400), n = Math.max(1, Math.round(len / 25));
+          for (let s = 0; s < n; s++) {
+            const la = la0 + ((la1 - la0) * s) / n, lo = lo0 + ((lo1 - lo0) * s) / n;
+            if (!urban(la, lo)) continue;
+            const [x, y] = px(la, lo); dot(x, y, 0.7, 1.4);
+          }
+        }
+      }
+      // povoados, vilas e localidades: grupinho de luzes
+      for (const p of places) {
+        if (!['povoado', 'vila', 'localidade'].includes(p.kind)) continue;
+        const [x, y] = px(p.lat, p.lon), nLights = p.kind === 'vila' ? 26 : p.kind === 'povoado' ? 14 : 6, r = p.kind === 'vila' ? 14 : 8;
+        for (let k = 0; k < nLights; k++) { const a = rnd() * Math.PI * 2, d = Math.sqrt(rnd()) * r; dot(x + Math.cos(a) * d, y + Math.sin(a) * d, 0.4 + 0.5 * rnd(), 1.3); }
+      }
+      // halo: a mesma imagem reduzida e ampliada (desfoca sem filtro de canvas, que o Safari não tem)
+      const sw = Math.round(W / 8), sh = Math.round(H / 8);
+      const cs = document.createElement('canvas'); cs.width = sw; cs.height = sh;
+      const gs = cs.getContext('2d'); gs.imageSmoothingQuality = 'high'; gs.drawImage(cv, 0, 0, sw, sh);
+      const cg = document.createElement('canvas'); cg.width = W; cg.height = H;
+      const gg = cg.getContext('2d', { willReadFrequently: true }); gg.imageSmoothingEnabled = true; gg.drawImage(cs, 0, 0, W, H);
+      const A = g.getImageData(0, 0, W, H).data, B = gg.getImageData(0, 0, W, H).data, rg = new Uint8Array(W * H * 2);
+      for (let i = 0, n = W * H; i < n; i++) { rg[i * 2] = A[i * 4]; rg[i * 2 + 1] = Math.min(255, B[i * 4] * 2.5); }
+      terrain.setLights(rg);
+      return true;
+    })();
+    return lightsP;
+  }
   const shadowBox = $('#t-shadows');
   shadowBox.checked = store.get('shadows') === '1';
   terrain.setShadows(shadowBox.checked);

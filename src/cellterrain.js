@@ -75,6 +75,8 @@ const FRAG = /* glsl */ `
   // sombras de nuvens (ruído que se repete, levado pelo vento) e destaque da propriedade escolhida
   uniform sampler2D uCloudTex;
   uniform float uTime, uClouds, uSelFlash;
+  // hora mágica (0–1), neblina da manhã nas baixadas (0–1), noite (0–1) e luzes (R = pontos, G = halo; grade da extensão)
+  uniform float uGold, uMist, uNight;   // as luzes moram no R/G de uMask (o limite do município fica no B): limite de 16 texturas
 
   // rampa do vigor: marrom (pouco verde) → amarelo → verde → verde-escuro
   vec3 vigRamp(float t) {
@@ -133,7 +135,7 @@ const FRAG = /* glsl */ `
     vec2 uvc = clamp(vUvc, 0.0, 1.0);
     vec2 ovUv = uOvRect.xy + uvc * uOvRect.zw;
     // recorte no limite municipal: máscara rasterizada do polígono (branco = dentro)
-    if (uClip > 0.5 && texture2D(uMask, ovUv).r < 0.5) discard;
+    if (uClip > 0.5 && texture2D(uMask, ovUv).b < 0.5) discard;
 
     vec3 n = normalize(vNormalV);
     float lam = max(dot(n, vSunV), 0.0);
@@ -203,6 +205,25 @@ const FRAG = /* glsl */ `
       float cn = texture2D(uCloudTex, (cp + wind) / 7000.0).r * 0.65 + texture2D(uCloudTex, (cp + wind * 1.3) / 2300.0 + 0.37).r * 0.35;
       float cs = smoothstep(0.52, 0.72, cn) * uClouds * smoothstep(0.0, 0.15, uSunL.y);
       col *= mix(vec3(1.0), vec3(0.62, 0.66, 0.74), cs);   // sombra levemente azulada (luz do céu)
+    }
+    if (uGold > 0.0) {   // hora mágica: encostas viradas para o sol douradas, as do outro lado azuladas
+      float lit = clamp(direct * 1.3, 0.0, 1.0);
+      col = mix(col, col * vec3(1.18, 0.97, 0.78) + vec3(0.03, 0.012, 0.0), uGold * lit * 0.85);
+      col = mix(col, col * vec3(0.86, 0.93, 1.12), uGold * (1.0 - lit) * 0.6);
+    }
+    if (uNight > 0.0) {   // noite: luar azulado e as luzes da cidade, das ruas e dos povoados
+      col *= mix(vec3(1.0), vec3(0.62, 0.72, 1.0), uNight * 0.75);
+      vec2 L = texture2D(uMask, ovUv).rg;
+      col += vec3(1.0, 0.68, 0.32) * (L.r * 1.1 + L.g * 0.45) * uNight;
+    }
+    if (uMist > 0.0) {   // neblina da manhã: o ar frio das baixadas (mapa de geada) com fiapos andando devagar
+      vec2 mp2 = ovUv * uExtM;
+      float wisp = texture2D(uCloudTex, mp2 / 1700.0 + vec2(uTime * 0.0025, uTime * 0.001)).r * 0.6
+                 + texture2D(uCloudTex, mp2 / 600.0 - vec2(uTime * 0.004, 0.0)).r * 0.4;
+      float ma = smoothstep(0.22, 0.72, sg.b) * smoothstep(0.15, 0.75, wisp + 0.25 * sg.b) * uMist;
+      vec3 mc = vec3(0.9, 0.92, 0.95) * (0.35 + 0.65 * clamp(uSunI * 1.6 + 0.15, 0.0, 1.0)) + uSunCol * 0.22 * clamp(uSunI * 2.0, 0.0, 1.0);
+      mc = mix(mc, uFog, 0.3);   // a neblina pega a cor do ar da hora (dourada ao amanhecer)
+      col = mix(col, mc, 0.78 * ma);
     }
     if (uSplit >= 0.0 && abs(gl_FragCoord.x - uSplit) < 1.5) col = vec3(1.0);
     col *= uDim;
@@ -377,6 +398,7 @@ export class CellTerrain {
       uSharp: { value: 0 }, uClarity: { value: 0 }, uTexel: { value: 1 / 1024 },
       uNdvi: { value: blank }, uVig: { value: 0 }, uVigR: { value: new THREE.Vector2(0.45, 0.9) },
       uCloudTex: { value: blank }, uTime: { value: 0 }, uClouds: { value: 0 }, uSelFlash: { value: 0 },
+      uGold: { value: 0 }, uMist: { value: 0 }, uNight: { value: 0 },
     };
     this.cloudTex = cloudTexture();
     this.shared.uCloudTex.value = this.cloudTex;
@@ -594,14 +616,16 @@ export class CellTerrain {
     const cv = document.createElement('canvas');
     cv.width = W; cv.height = H;
     const ctx = cv.getContext('2d', { willReadFrequently: true });
+    // só o azul: o vermelho e o verde guardam as luzes da noite (setLights)
     ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = '#fff'; ctx.beginPath();
+    ctx.fillStyle = '#00f'; ctx.beginPath();
     ring.forEach(([lat, lon], k) => {
       const x = ((lon - EXTENT.w) / (EXTENT.e - EXTENT.w)) * W, y = ((EXTENT.n - lat) / (EXTENT.n - EXTENT.s)) * H;
       k ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
     });
     ctx.closePath(); ctx.fill();
     this.maskData = { W, H, px: ctx.getImageData(0, 0, W, H).data };
+    this.maskCtx = ctx;
     const tex = new THREE.CanvasTexture(cv);
     tex.minFilter = THREE.LinearFilter; tex.generateMipmaps = false;
     this.shared.uMask.value = tex;
@@ -616,7 +640,7 @@ export class CellTerrain {
     const { W, H, px } = this.maskData;
     const i = Math.floor(((lon - EXTENT.w) / (EXTENT.e - EXTENT.w)) * W), j = Math.floor(((EXTENT.n - lat) / (EXTENT.n - EXTENT.s)) * H);
     if (i < 0 || j < 0 || i >= W || j >= H) return false;
-    return px[(j * W + i) * 4] > 127;
+    return px[(j * W + i) * 4 + 2] > 127;
   }
 
   // --- "maquete": paredes com camadas de terra e rocha + sombra suave embaixo ---------------------------
@@ -712,6 +736,24 @@ export class CellTerrain {
 
   /** sombras de nuvens no chão (0–1) */
   setClouds(v) { this.shared.uClouds.value = v; }
+  /** hora do dia: gold = hora mágica, mist = neblina da manhã, night = noite (0–1 cada) */
+  setAtmosphere({ gold, mist, night }) {
+    const u = this.shared;
+    if (gold !== undefined) u.uGold.value = gold;
+    if (mist !== undefined) u.uMist.value = mist;
+    if (night !== undefined) u.uNight.value = night;
+  }
+  /** tamanho da grade das luzes (a mesma da máscara do limite) */
+  get lightsSize() { return this.maskData ? { W: this.maskData.W, H: this.maskData.H } : null; }
+  /** luzes da noite: rg = W×H×2 bytes (pontos, halo) na grade de lightsSize, gravados no R/G da máscara */
+  setLights(rg) {
+    const { W, H, px } = this.maskData, img = this.maskCtx.createImageData(W, H), d = img.data;
+    for (let i = 0, n = W * H; i < n; i++) { d[i * 4] = rg[i * 2]; d[i * 4 + 1] = rg[i * 2 + 1]; d[i * 4 + 2] = px[i * 4 + 2]; d[i * 4 + 3] = 255; }
+    this.maskCtx.putImageData(img, 0, 0);
+    const tex = this.shared.uMask.value;
+    tex.generateMipmaps = true; tex.minFilter = THREE.LinearMipmapLinearFilter;   // pontos de luz sem cintilar de longe
+    tex.needsUpdate = true;
+  }
   /** clarão rápido dentro da propriedade recém-escolhida */
   flashSelection() { this.flashAt = performance.now(); }
   get clipped() { return this.shared.uClip.value > 0.5; }

@@ -114,6 +114,16 @@ terra e rocha **estilizadas** (BASE_FRAG em cellterrain.js; não é geologia med
 propriedade escolhida com brilho na borda, clarão ao escolher (`flashSelection`) e luz correndo no arame da cerca;
 rótulos em pílula (área da escolhida em dourado); tema Automático/Claro/Escuro (`data-theme` no `<html>`).
 
+Hora do dia (régua de 0 h a 24 h; atalhos Agora · Amanhecer · Hora mágica · Noite): `skyState` devolve `gold` e
+`night`; `terrain.setAtmosphere({ gold, mist, night })` — hora mágica (encostas ao sol douradas, sombras azuladas),
+neblina da manhã nas baixadas (B do solgeada = mapa de geada, com fiapos do ruído das nuvens; opção em Luz e relevo) e
+noite (luar azulado + luzes). Luzes: feitas no navegador na primeira noite (mancha urbana = classe 24 do MapBiomas 2025,
+postes a cada ~25 m nas ruas do OSM dentro dela, grupinhos nos povoados) e gravadas no R/G da textura `uMask` (o limite
+do município ficou no B). **O shader do terreno está no limite de 16 texturas** (MAX_TEXTURE_IMAGE_UNITS): textura nova
+tem de entrar num canal livre de uma existente. Céu: estrelas e Via Láctea de noite. Água (vectors.js): rios e córregos
+refletem a cor do céu e piscam brilhos (`waterShader`, via vLineDistance); a correnteza virou "cometas" (`cometShader`);
+de noite as linhas apagam (`setNight`).
+
 Dados acrescentados em 03/10/2026 sem Python (a máquina não tem): PowerShell + navegador do app.
 - Clima: Open-Meteo Historical Weather API (5 pontos, 1991–2020) → `andrelandia_clima_openmeteo.json` (ERA5-Land) e
   `andrelandia_chuva_openmeteo_era5.json` (ERA5) → `tools/build_clima.ps1`.
