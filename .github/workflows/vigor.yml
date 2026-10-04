@@ -1,0 +1,41 @@
+# Vigor da pastagem: NDVI da Sentinel-2 (Earth Search, AWS) nas águas e na seca, mapa de 2026 e tendência por
+# propriedade desde 2019 (tools/build_vigor.py). Grava em data/muni/layers/ e publica o site.
+name: Vigor da pastagem (gera e publica)
+
+on:
+  workflow_dispatch:
+    inputs:
+      years:
+        description: 'Anos (o último vira o mapa de 10 m)'
+        default: '2019-2026'
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --quiet rasterio numpy pillow requests
+      - name: Calcular o vigor
+        env:
+          YEARS: ${{ inputs.years }}
+        run: python tools/build_vigor.py --years "$YEARS"
+      - name: Gravar no repositório
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/muni/layers/vigor*.webp data/muni/layers/vigor.json
+          git commit -m 'Vigor da pastagem (NDVI da Sentinel-2)' || exit 0
+          git pull --rebase
+          git push
+      - name: Publicar o site
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml -R "$GITHUB_REPOSITORY"
