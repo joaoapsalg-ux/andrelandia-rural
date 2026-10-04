@@ -129,7 +129,8 @@ def s2_offset(bbox, crs):
     Busca a cena Sentinel-2 L2A de jun–ago/2026 com menos nuvem no catálogo aberto da AWS (Element84)."""
     import json, urllib.request
     w, s, e, n = bbox
-    q = {'collections': ['sentinel-2-l2a'], 'bbox': [w, s, e, n], 'datetime': '2026-06-01T00:00:00Z/2026-08-31T23:59:59Z',
+    dt = os.environ.get('S2_DATETIME') or '2026-06-01T00:00:00Z/2026-08-31T23:59:59Z'   # uma data só = referência coerente
+    q = {'collections': ['sentinel-2-l2a'], 'bbox': [w, s, e, n], 'datetime': dt,
          'query': {'eo:cloud_cover': {'lt': 10}}, 'limit': 20}
     req = urllib.request.Request('https://earth-search.aws.element84.com/v1/search', data=json.dumps(q).encode(), headers={'Content-Type': 'application/json'})
     items = json.load(urllib.request.urlopen(req, timeout=60))['features']
@@ -244,7 +245,11 @@ def run_stack(a, sk):
     keys = a.dates.split(',')
     dss = [rasterio.open(cog_url(k)) for k in keys]
     de = dn = 0.0
-    if a.offset:   # deslocamento já medido (leste, norte em metros), igual para a cena toda
+    model = None
+    if a.alignmodel:   # correção suave medida pelo --checkalign: deslocamento = a0 + a1·x + a2·y (x, y em km)
+        model = list(map(float, a.alignmodel.split(',')))
+        print('encaixe pelo modelo afim', model)
+    elif a.offset:   # deslocamento já medido (leste, norte em metros), igual para a cena toda
         de, dn = map(float, a.offset.split(','))
         print(f'encaixe fixo: {de:+.1f} m leste, {dn:+.1f} m norte')
     elif a.align:   # um deslocamento só para todas as células pedidas (erro de posição da cena, quase uma translação)
@@ -258,7 +263,13 @@ def run_stack(a, sk):
         t0 = time.time()
         LON, LAT = cell_grid(r, c)
         X, Y = transform('EPSG:4326', dss[0].crs, LON.ravel().tolist(), LAT.ravel().tolist())
-        X = np.array(X).reshape(TS, TS) + de; Y = np.array(Y).reshape(TS, TS) + dn
+        X = np.array(X).reshape(TS, TS); Y = np.array(Y).reshape(TS, TS)
+        if model:
+            x0, y0, ae0, ae1, ae2, an0, an1, an2 = model
+            kx, ky = (X - x0) / 1000, (Y - y0) / 1000
+            X, Y = X + ae0 + ae1 * kx + ae2 * ky, Y + an0 + an1 * kx + an2 * ky
+        else:
+            X, Y = X + de, Y + dn
         imgs = [read_rgb(ds, X, Y, a.order) for ds in dss]
         ref = imgs[0]; refL = lum(ref); valid = ref.sum(-1) > 0
         stack, shifts = [], []
@@ -364,6 +375,7 @@ def main():
     ap.add_argument('--deshadow', type=float, default=0.0, help='correção das sombras da hora da foto, 0–1')
     ap.add_argument('--denoise', type=float, default=0.0, help='tira o granulado antes de realçar (h do non-local means em múltiplos do ruído, ~0,8)')
     ap.add_argument('--align', action='store_true', help='encaixa a CBERS na posição da Sentinel-2 antes de ler')
+    ap.add_argument('--alignmodel', default='', help='modelo de encaixe "x0,y0,ae0,ae1,ae2,an0,an1,an2" (do --checkalign)')
     ap.add_argument('--offset', default='', help='encaixe fixo "leste,norte" em metros (já medido; dispensa a Sentinel-2)')
     ap.add_argument('--checkalign', action='store_true', help='só mede o encaixe em cada célula de --cells (separadamente)')
     ap.add_argument('--format', default='jpg', choices=['jpg', 'webp', 'both'])
@@ -376,12 +388,28 @@ def main():
     a = ap.parse_args()
     if a.inspect:
         return inspect_l4(a.cells)
-    if a.checkalign:   # o deslocamento é o mesmo na cena toda? mede célula por célula
+    if a.checkalign:   # mede o encaixe célula por célula e ajusta uma correção suave (afim) para a cena toda
+        pts = []
         with rasterio.open(COG) as ds:
             for cell in a.cells.split(','):
                 r, c = map(int, cell.split('_'))
                 bbox = (EXT['w'] + c * CLON, EXT['n'] - (r + 1) * CLAT, EXT['w'] + (c + 1) * CLON, EXT['n'] - r * CLAT)
-                print(cell, s2_offset(bbox, ds.crs)[2])
+                de, dn, info = s2_offset(bbox, ds.crs)
+                print(cell, info)
+                if 'ignorado' not in info and 'sem cena' not in info:
+                    X, Y = transform('EPSG:4326', ds.crs, [(bbox[0] + bbox[2]) / 2], [(bbox[1] + bbox[3]) / 2])
+                    pts.append((X[0], Y[0], de, dn))
+        if len(pts) >= 6:
+            P = np.array(pts); x0, y0 = P[:, 0].mean(), P[:, 1].mean()
+            A = np.c_[np.ones(len(P)), (P[:, 0] - x0) / 1000, (P[:, 1] - y0) / 1000]
+            keep = np.ones(len(P), bool)
+            for _ in range(3):   # ajuste robusto: tira os pontos muito fora (referência ruim, mudança no terreno)
+                ce, *_ = np.linalg.lstsq(A[keep], P[keep, 2], rcond=None); cn, *_ = np.linalg.lstsq(A[keep], P[keep, 3], rcond=None)
+                res = np.hypot(A @ ce - P[:, 2], A @ cn - P[:, 3])
+                keep = res < max(3.0, 2.5 * np.median(res[keep]))
+            model = ','.join(f'{v:.4f}' for v in (x0, y0, *ce, *cn))
+            print(f'MODELO DE ENCAIXE (x0,y0,ae0,ae1,ae2,an0,an1,an2): {model}')
+            print(f'pontos usados {keep.sum()} de {len(P)}, resíduo mediano {np.median(res[keep]):.1f} m, máximo {res[keep].max():.1f} m')
         return
     global TS
     TS = a.size

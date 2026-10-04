@@ -12,6 +12,9 @@ on:
       variants:
         description: 'Versões, uma por linha de "tag: opções" (ex.: "_b: --order 3 --unsharp 0.4 --quality 92")'
         default: ': '
+      s2date:
+        description: 'Período da Sentinel-2 usada no encaixe (ex.: 2026-08-30T00:00:00Z/2026-08-30T23:59:59Z); vazio = jun–ago/2026'
+        default: ''
 
 permissions:
   contents: read
@@ -35,6 +38,7 @@ jobs:
         env:
           CELLS: ${{ inputs.cells }}
           VARIANTS: ${{ inputs.variants }}
+          S2_DATETIME: ${{ inputs.s2date }}
         run: |
           printf '%s\n' "$VARIANTS" | tr ';' '\n' | while IFS=: read -r tag opts; do
             [ -z "$tag$opts" ] && continue
