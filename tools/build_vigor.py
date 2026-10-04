@@ -41,8 +41,11 @@ PASTO = 15
 
 # sem GDAL_HTTP_MULTIRANGE: o S3 não aceita vários trechos num pedido e devolve o arquivo inteiro (~150 MB por banda)
 os.environ.update(GDAL_DISABLE_READDIR_ON_OPEN='EMPTY_DIR', CPL_VSIL_CURL_ALLOWED_EXTENSIONS='.tif', AWS_NO_SIGN_REQUEST='YES',
-                  GDAL_HTTP_MERGE_CONSECUTIVE_RANGES='YES', VSI_CACHE='TRUE', GDAL_CACHEMAX='512')
+                  GDAL_HTTP_MERGE_CONSECUTIVE_RANGES='YES', VSI_CACHE='TRUE', GDAL_CACHEMAX='2048', GDAL_INGESTED_BYTES_AT_OPEN='65536')
 STATS = {'off': 0, 'nooff': 0}
+# cada banda é lida em centenas de pedidos pequenos, um depois do outro (a demora é a ida e volta, não o volume):
+# muitas bandas ao mesmo tempo
+BANDS = ThreadPoolExecutor(36)
 
 
 def log(*a): print(f'[{time.time() - T0:6.1f}s]', *a, flush=True)
@@ -80,9 +83,10 @@ def ndvi_of(it, transform, w, h, coarse):
     A = it['assets']
     ov = 0 if coarse else None   # 2019–2025: visão de 20 m das bandas de 10 m (a SCL já é de 20 m)
     rs = Resampling.average
-    red = read_grid(A['red']['href'], transform, w, h, rs, ov).astype(np.float32)
-    nir = read_grid(A['nir']['href'], transform, w, h, rs, ov).astype(np.float32)
-    scl = read_grid(A['scl']['href'], transform, w, h, Resampling.nearest)
+    fr = BANDS.submit(read_grid, A['red']['href'], transform, w, h, rs, ov)
+    fn = BANDS.submit(read_grid, A['nir']['href'], transform, w, h, rs, ov)
+    fs = BANDS.submit(read_grid, A['scl']['href'], transform, w, h, Resampling.nearest)
+    red, nir, scl = fr.result().astype(np.float32), fn.result().astype(np.float32), fs.result()
     ok = (red > 0) & (nir > 0) & np.isin(scl, [4, 5])
     # deslocamento de +1000 nos números (cenas processadas a partir de 2022): decidido pelos dados, não pelo catálogo
     # (que marca "boa_offset_applied" e offset −0,1 ao mesmo tempo). Mata fechada reflete 2–4% no vermelho:
@@ -101,7 +105,7 @@ def composite(year, season, transform, w, h, coarse, max_items):
     items = search(year, season, max_items)
     pct = SEASONS[season][2]
     if not items: log(year, season, 'nenhuma cena'); return None, []
-    with ThreadPoolExecutor(8) as ex:
+    with ThreadPoolExecutor(12) as ex:
         stack = list(ex.map(lambda it: ndvi_of(it, transform, w, h, coarse), items))
     stack = np.stack(stack)
     out = np.full((h, w), np.nan, np.float32)
