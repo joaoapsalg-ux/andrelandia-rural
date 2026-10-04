@@ -491,7 +491,7 @@ export class CarLayer {
     if (!s) return h + `<p class="model-note">Propriedade fora da área com dados do mapa.</p>`;
     const partial = s.a / f.ha < 0.9 ? `<p class="cc-warn">A propriedade passa da borda do mapa: os números abaixo valem só para a parte dentro dele (${nf(s.a)} ha).</p>` : '';
     // abas: o cabeçalho fica sempre; o resumo junta o principal de cada parte em cartões que levam à aba dela
-    const tabs = [['resumo', 'Resumo'], ['terra', 'Terra'], ['pasto', 'Pasto'], ['agua', 'Água'], ['clima', 'Clima e solo'], ['viz', 'Vizinhança']];
+    const tabs = [['resumo', 'Resumo'], ['terra', 'Terra'], ['pasto', 'Pasto'], ['agua', 'Água'], ['clima', 'Clima'], ['viz', 'Entorno']];
     h += `<nav class="cc-tabs" role="tablist" aria-label="Partes da ficha">${tabs.map(([k, l]) => `<button type="button" role="tab" data-tab-btn="${k}">${l}</button>`).join('')}</nav>`;
     h += partial + '<div class="cc-grid">';
     h += this.#summary(x);
