@@ -166,6 +166,12 @@ def run_stack(a, sk):
                 img[..., k] = (img[..., k] - img[..., k][m].mean()) / max(img[..., k][m].std(), 1e-3) * ref[..., k][m].std() + ref[..., k][m].mean()
             stack.append(img)
         med = np.median(np.stack(stack), 0)
+        if len(stack) > 1:
+            # a primeira data (a mais recente) manda: as outras só entram onde mostram o mesmo (tiram ruído e névoa);
+            # onde a terra mudou (colheita, desmate) ou há nuvem numa delas, a diferença é grande e fica a primeira
+            dL = np.abs(lum(med) - lum(ref))
+            wgt = np.exp(-(gaussian_filter(dL, 1.5) / 14.0) ** 2)[..., None]
+            med = ref + wgt * (med - ref)
         if a.dehaze: med = dehaze(med, a.dehaze)
         out = match_to_base(med, base_tile(r, c), valid, sk)
         if a.clarity: out = out + a.clarity * (out - np.stack([gaussian_filter(out[..., j], 6 * sk) for j in range(3)], -1))
