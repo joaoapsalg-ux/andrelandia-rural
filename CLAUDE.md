@@ -48,6 +48,11 @@ src/access.js         acesso pela estrada: menor caminho no OSM até o asfalto (
                       o centro (Igreja Matriz); grafo montado no primeiro uso
 src/agro.js           clima (IDW de 5 pontos + ajuste pela altitude), solo (média das células de 250 m) e ZARC por
                       propriedade; gráfico do ano e faixas de 36 decêndios em SVG
+src/aptidao.js        aptidão da terra (protótipo em teste, 05/10/2026): calculada no navegador na grade de 30 m (~1,5 s
+                      na 1ª vez) a partir de relevo, SoilGrids, solgeada, MapBiomas 2025, car_id (APP) e córregos:
+                      capacidade de uso I–VIII, mecanização/lei, nota 0–100 de 5 culturas, erosão (RUSLE), conflitos;
+                      vira chão "Aptidão" (5 modos, cor no encaixe do vigor `uNdvi` + `uApt`), aba "Aptidão" da ficha
+                      (com "quanto dá para produzir": APP + Reserva Legal 20% + livre) e a ferramenta "Planejar um talhão"
 src/vectors.js        linhas sobre o relevo (estradas, rios, córregos, limite, correnteza animada)
 src/sun.js            posição do sol e cúpula do céu (SkyDome: degradê pela altura do olhar + brilho do sol)
 src/pois.js, geo.js, heightfield.js, sources/png.js, config.js

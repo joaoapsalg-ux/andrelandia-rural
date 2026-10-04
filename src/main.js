@@ -22,6 +22,7 @@ import { buildSheet } from './sheet.js';
 import { RoadAccess, AccessLayer, accessText } from './access.js';
 import { Agro, FEATURED, agroText, bestWindow, zarcStrip, climateChart, phName } from './agro.js';
 import { sunPosition, sunDirection, skyState, SkyDome, compassName } from './sun.js';
+import { Aptitude, aptHTML, CAP, MECH, EROS, CROPS, CONF } from './aptidao.js';
 
 const $ = (s) => document.querySelector(s);
 const stage = $('#stage');
@@ -255,11 +256,10 @@ async function start() {
   layout();
 
   // --- resultados no painel: ficha (Propriedade), gota e perfil (Ferramentas), lugar (Lugares) -------------
-  const PANELS = { info: $('#info'), car: $('#car-card'), drop: $('#drop-card'), profile: $('#profile') };
-  const PANE_OF = { info: 'lugares', car: 'prop', drop: 'ferr', profile: 'ferr' };
+  const PANELS = { info: $('#info'), car: $('#car-card'), drop: $('#drop-card'), profile: $('#profile'), plot: $('#plot-card') };
+  const PANE_OF = { info: 'lugares', car: 'prop', drop: 'ferr', profile: 'ferr', plot: 'ferr' };
   function openPanel(name) {
-    if (name === 'drop') PANELS.profile.hidden = true;
-    if (name === 'profile') PANELS.drop.hidden = true;
+    for (const t of ['drop', 'profile', 'plot']) if (t !== name && PANE_OF[name] === 'ferr') PANELS[t].hidden = true;   // um resultado de ferramenta por vez
     if (name === 'car') showCard(true); else PANELS[name].hidden = false;
     // no celular a gota e o perfil abrem a gaveta baixa: o mapa (onde a gota desce) continua à vista
     showPane(PANE_OF[name], { sheet: name === 'drop' || name === 'profile' ? 'peek' : 'half' });
@@ -282,6 +282,7 @@ async function start() {
     PANELS[c.dataset.close].hidden = true;
     if (c.dataset.close === 'drop') drop.stop();
     if (c.dataset.close === 'profile') { profile.clear(); setTool(null); }
+    if (c.dataset.close === 'plot') { plot.pts = []; plot.done = false; vectors.removeLines('plot'); setTool(null); }
   });
 
   // --- sol e céu ------------------------------------------------------------------
@@ -640,7 +641,9 @@ async function start() {
     $('#geada-panel').hidden = v !== 'geada';
     $('#alt-panel').hidden = v !== 'altitude';
     $('#vig-panel').hidden = v !== 'vigor';
-    if (v === 'vigor') loadVigor(VIG.season);
+    $('#apt-panel').hidden = v !== 'aptidao';
+    if (v === 'vigor') { if (VIG.tex) terrain.setVigorTexture(VIG.tex, VIG_RANGE[VIG.season]); loadVigor(VIG.season); }   // a aptidão usa o mesmo encaixe
+    if (v === 'aptidao') showApt();
     $('#year-badge').hidden = v !== 'landuse';
     if (SOL[v]) { $('#sol-min').textContent = nf(SOL[v].range[0], 1); $('#sol-max').textContent = nf(SOL[v].range[1], 1); $('#sol-note').textContent = SOL[v].note; }
     if (v === 'landuse') { if (LC10.on && !LC10.tex) setLc10(true); else setYearPos(tmPos); } else stopPlay();
@@ -824,6 +827,7 @@ async function start() {
     body.dataset.tab = k;
     body.querySelectorAll('[data-tab-btn]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tabBtn === k)));
     store.set('cardTab2', k);
+    if (k === 'apt' && carLayer.sel) fillApt(carLayer.sel);   // a aptidão só é calculada quando a aba aparece
   }
   const renderCard = (x) => {
     const w = mqPhone.matches ? innerWidth - 32 : paneW - 40;
@@ -1009,7 +1013,101 @@ async function start() {
     });
   }
 
-  // --- folha da propriedade ---------------------------------------------------------------------------
+  // --- aptidão da terra (aptidao.js): mapa com 5 modos, aba na ficha e talhão desenhado --------------------------
+  const apt = new Aptitude({ G: GRIDS.g30, EXT: EXTENT, hf, agro, lcBlob: () => blobOf(YEARS.length - 1), drainage, osm, boundary });
+  const APT = { mode: ['cap', 'crop', 'mech', 'eros', 'conf'].includes(store.get('aptMode')) ? store.get('aptMode') : 'cap', crop: Math.min(CROPS.length - 1, +(store.get('aptCrop') ?? 0) || 0) };
+  $('#apt-crop').innerHTML = CROPS.map((c, i) => `<option value="${i}">${c.name}</option>`).join('');
+  $('#apt-crop').value = String(APT.crop);
+  $(`#am-${APT.mode}`).checked = true;
+  async function loadApt() {
+    if (!apt.L) $('#apt-state').textContent = 'Calculando a aptidão do município (uns segundos na primeira vez)…';
+    try { await apt.load(); $('#apt-state').textContent = ''; return true; } catch (e) { console.error(e); $('#apt-state').textContent = 'Não foi possível calcular a aptidão.'; return false; }
+  }
+  async function showApt() {
+    $('#apt-crop-row').hidden = APT.mode !== 'crop';
+    if (!(await loadApt()) || style.surface !== 'aptidao') return;
+    terrain.setAptTexture(apt.texture(APT.mode, APT.crop));
+    renderAptLegend();
+  }
+  function renderAptLegend() {
+    const T = apt.muniTot, fha = (v) => `${nf(v / 100, v < 1000 ? 1 : 0)} km²`;
+    const rows = (list, tot, label) => `<div class="apt-leg">${list.map((c, i) => (c && tot[i] > 0 ? `<div><span class="lc-sw" style="background:${c.c}"></span><span>${label(c)}</span><b>${fha(tot[i])}</b></div>` : '')).join('')}</div>`;
+    const m = APT.mode;
+    $('#apt-legend').innerHTML = m === 'cap' ? rows(CAP, T.cap, (c) => `<b class="apt-k">${c.k}</b>${c.use}`)
+      : m === 'mech' ? rows(MECH, T.mech, (c) => `${c.k} <small class="dim">${c.d}</small>`)
+        : m === 'eros' ? rows(EROS, T.eros, (c) => `${c.k}`) + '<p class="model-note">Perda de solo estimada (t/ha por ano) com o uso de hoje: até 5 o solo aguenta; acima de 15, vale curva de nível, terraço e cobertura.</p>'
+          : m === 'conf' ? rows(CONF, T.conf, (c) => c.k)
+            : `<div class="apt-ramp"></div><div class="ramp-scale"><span>inapta</span><span>regular</span><span>boa</span></div>
+               <p class="model-note">${CROPS[APT.crop].name} no município: <b>${fha(T.crop[APT.crop][0])}</b> boas e ${fha(T.crop[APT.crop][1])} regulares. Cinza: APP ou encosta acima de 45°.</p>`;
+  }
+  document.querySelectorAll('input[name="apt-mode"]').forEach((r) => r.addEventListener('change', () => {
+    if (!r.checked) return;
+    APT.mode = r.value; store.set('aptMode', r.value); crossfade(); showApt();
+  }));
+  $('#apt-crop').addEventListener('change', (e) => { APT.crop = +e.target.value; store.set('aptCrop', String(APT.crop)); crossfade(); showApt(); });
+  /** mostra um modo da aptidão no mapa (botões da ficha e do talhão) */
+  function aptOnMap(mode, crop) {
+    APT.mode = mode; if (crop != null) { APT.crop = crop; $('#apt-crop').value = String(crop); }
+    $(`#am-${mode}`).checked = true; $('#s-apt').checked = true;
+    if (style.surface === 'aptidao') { crossfade(); showApt(); } else setSurface('aptidao', { fade: true });
+    if (mqPhone.matches) setSheet('peek');
+  }
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-apt-map]'); if (!b) return;
+    aptOnMap(b.dataset.aptMap, b.dataset.aptCrop != null ? +b.dataset.aptCrop : null);
+  });
+  const zarcText = (soil) => (name) => { const z = agro.zarc && soil ? agro.zarcFor(name, soil) : null; return z ? `plantio: ${bestWindow(z.risk) ?? 'não indicado'}` : null; };
+  // aba "Aptidão" da ficha: calculada quando a aba aparece (a primeira vez lê os mapas e calcula o município todo)
+  async function fillApt(x) {
+    const wait = $('#cc-apt-wait');
+    if (!wait || wait.dataset.busy) return;
+    wait.dataset.busy = '1';
+    if (!(await loadApt())) { wait.querySelector('.cc-note').textContent = 'Não foi possível calcular a aptidão.'; return; }
+    await agro.load().catch(() => null);
+    if (carLayer.sel !== x || !wait.isConnected) return;
+    const st = apt.statsFor(x.f.rings), s = x.f.s;
+    if (!st) { wait.innerHTML = '<h3>Aptidão da terra</h3><p class="cc-note">Propriedade fora da área do mapa.</p>'; return; }
+    const soil = agro.solo ? agro.of(x).soil : null;
+    const [aha, anat] = s.app, natOut = Math.max(0, (s.n25 / 100) * s.a - (aha * anat) / 100);
+    wait.insertAdjacentHTML('beforebegin', aptHTML(st, { nf, zarc: zarcText(soil), usable: { a: s.a, app: aha, natOut, mf: x.f.mf } }));
+    wait.remove();
+  }
+
+  // talhão desenhado: toques nos cantos; tocar no primeiro canto (ou em "Concluir") fecha
+  const plot = { pts: [] };
+  function drawPlot(closed) {
+    if (plot.pts.length < 2) { vectors.removeLines('plot'); return; }
+    vectors.addLines('plot', 'highlight', { color: 0xffd34d, width: 3.5, lift: 7, opacity: 1, order: 8, noClip: true }, [closed ? [...plot.pts, plot.pts[0]] : plot.pts], 10);
+  }
+  function plotAdd(lat, lon, ev) {
+    if (plot.done) { plot.pts = []; plot.done = false; PANELS.plot.hidden = true; }
+    if (plot.pts.length >= 3) {   // perto do primeiro canto (na tela): fecha
+      const p0 = terrain.worldPosition(...plot.pts[0]).project(camera), r = renderer.domElement.getBoundingClientRect();
+      const x0 = r.left + (p0.x * 0.5 + 0.5) * r.width, y0 = r.top + (-p0.y * 0.5 + 0.5) * r.height;
+      if (Math.hypot(ev.clientX - x0, ev.clientY - y0) < 22) { finishPlot(); return; }
+    }
+    plot.pts.push([lat, lon]);
+    drawPlot(false);
+    $('#tool-hint-text').textContent = plot.pts.length < 3 ? `Canto ${plot.pts.length}: toque no próximo canto` : `${plot.pts.length} cantos · toque no primeiro canto para fechar`;
+    $('#tool-hint-ok').hidden = plot.pts.length < 3;
+  }
+  async function finishPlot() {
+    if (plot.pts.length < 3) return;
+    plot.done = true; drawPlot(true); $('#tool-hint-ok').hidden = true;
+    $('#tool-hint-text').textContent = 'Toque de novo para começar outro talhão';
+    PANELS.plot.hidden = false;
+    $('#plot-title').textContent = 'Calculando…'; $('#plot-body').innerHTML = '';
+    openPanel('plot');
+    if (!(await loadApt())) { $('#plot-title').textContent = 'Não foi possível calcular.'; return; }
+    await agro.load().catch(() => null);
+    const ring = plot.pts, st = apt.statsFor([ring]);
+    if (!st) { $('#plot-title').textContent = 'Fora da área do mapa.'; return; }
+    let w = 180, e = -180, s = 90, n = -90; for (const [la, lo] of ring) { s = Math.min(s, la); n = Math.max(n, la); w = Math.min(w, lo); e = Math.max(e, lo); }
+    const soil = agro.solo ? agro.of({ k: `plot-${Date.now()}`, f: { rings: [ring], s: null }, w, e, s, n }).soil : null;
+    $('#plot-title').textContent = `${nf(st.ha, st.ha < 10 ? 1 : 0)} ha · declividade média ${nf(st.slope)}%`;
+    $('#plot-body').innerHTML = `<section><p class="cc-kv">Altitude <b>${nf(st.zmin)}–${nf(st.zmax)} m</b> · sol no inverno <b>${nf(st.sun, 1)} kWh/m²</b> · baixada fria <b>${nf(st.frost * 100)}%</b>${soil ? ` · solo ${soil.tipoName}, pH ${nf(soil.ph, 1)}` : ''}</p>
+      ${st.app >= 0.05 ? `<p class="cc-warn">${nf(st.app, 1)} ha deste talhão estão em APP estimada.</p>` : ''}</section>` + aptHTML(st, { nf, zarc: zarcText(soil) });
+  }
   const until = (cond, ms) => new Promise((res) => { const t0 = performance.now(); const loop = () => (cond() || performance.now() - t0 > ms ? res() : setTimeout(loop, 100)); loop(); });
   // fotografa a cena num tamanho fixo (mesmo quadro: nada pisca na tela)
   function captureView(w, h) {
@@ -1192,11 +1290,15 @@ async function start() {
 
   // --- ferramentas ----------------------------------------------------------------------------
   let tool = null;
-  const HINT = { drop: 'Toque no mapa onde a chuva cai', profile: 'Toque no ponto de partida do perfil' };
+  const HINT = { drop: 'Toque no mapa onde a chuva cai', profile: 'Toque no ponto de partida do perfil', plot: 'Toque no primeiro canto do talhão' };
   function setTool(t) {
+    if (tool === 'plot' && t !== 'plot' && !plot.done) { plot.pts = []; vectors.removeLines('plot'); }   // talhão pela metade some
+    if (t === 'plot') { plot.pts = []; plot.done = false; vectors.removeLines('plot'); }
+    $('#tool-hint-ok').hidden = true;
     tool = t;
     $('#tool-drop').setAttribute('aria-pressed', String(t === 'drop'));
     $('#tool-profile').setAttribute('aria-pressed', String(t === 'profile'));
+    $('#tool-plot').setAttribute('aria-pressed', String(t === 'plot'));
     $('#tool-hint').hidden = !t;
     if (t) $('#tool-hint-text').textContent = HINT[t];
     renderer.domElement.style.cursor = t ? 'crosshair' : '';
@@ -1212,6 +1314,8 @@ async function start() {
     if (mqPhone.matches) setCollapsed(true);
     startOrbit(controls.target.clone(), Math.max(800, Math.min(25000, camera.position.distanceTo(controls.target) * 0.8)), 'Sobrevoo');
   });
+  $('#tool-plot').addEventListener('click', () => setTool(tool === 'plot' ? null : 'plot'));
+  $('#tool-hint-ok').addEventListener('click', () => finishPlot());
   $('#tool-hint-x').addEventListener('click', () => { setTool(null); stopOrbit(); });
   window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { demo.stop(); setTool(null); stopOrbit(); } });
 
@@ -1232,6 +1336,7 @@ async function start() {
     if (!hit) return;
     const { lat, lon } = frame.toLatLon(hit.point.x, hit.point.z);
     if (tool === 'drop') { rain(lat, lon); $('#tool-hint-text').textContent = 'Toque em outro ponto para outra gota'; return; }
+    if (tool === 'plot') { plotAdd(lat, lon, e); return; }
     if (tool === 'profile') {
       const step = profile.add(hit.point.x, hit.point.z);
       if (step === 'a') { $('#tool-hint-text').textContent = 'Agora toque no ponto de chegada'; PANELS.profile.hidden = true; }

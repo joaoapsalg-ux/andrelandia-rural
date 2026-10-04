@@ -168,6 +168,7 @@
   .sv--alt { background: linear-gradient(90deg, #78995f, #b3ba7d, #cdae78, #b3845c, #ede3d1); }
   .sv--solw { background: linear-gradient(90deg, #2b1c54, #802b6b, #d9544a, #f79e3b, #fdeda0); }
   .sv--sols { background: linear-gradient(90deg, #d9544a, #f79e3b, #fdeda0); }
+  .sv--apt { background: linear-gradient(90deg, #1a7f3c 0 22%, #7bb342 22% 40%, #e2cf3a 40% 55%, #f09a36 55% 68%, #c48a5a 68% 82%, #9c4a38 82% 92%, #76598f 92%); }
   .sv--geada { background: radial-gradient(ellipse at 50% 80%, #f4f9ff 0 25%, #9fcbf0 45%, transparent 70%), linear-gradient(#7d7d7d, #8a8a8a); }
 
   /* máquina do tempo e gráficos */
@@ -192,6 +193,22 @@
   .seg2 input:checked + label { background: var(--accent); color: var(--panel); }
   .seg2 input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: -3px; }
   .seg2--3 { grid-template-columns: repeat(3, 1fr); }
+  /* aptidão */
+  .apt-modes { display: flex; flex-wrap: wrap; gap: 4px; }
+  .apt-modes input { position: absolute; opacity: 0; pointer-events: none; }
+  .apt-modes label { cursor: pointer; padding: 6px 9px; border-radius: 999px; border: 1px solid var(--panel-line); font: 600 11.5px/1 var(--f-display); letter-spacing: .05em; text-transform: uppercase; color: var(--ink-soft); }
+  .apt-modes input:checked + label { background: var(--accent); border-color: var(--accent); color: var(--panel); }
+  .apt-modes input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .apt-leg { display: grid; gap: 3px; font-size: 12.5px; }
+  .apt-leg div { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; }
+  .apt-leg b { font: 500 11.5px var(--f-data); color: var(--ink-soft); }
+  .apt-ramp { height: 10px; border-radius: 3px; background: linear-gradient(90deg, #b2182b, #e0702f, #e8c53a, #9cc05a, #2f8a3c, #145a2a); }
+  .apt-k { display: inline-block; min-width: 2.2em; font: 700 12px var(--f-display); color: var(--ink); }
+  .apt-crops td:first-child small.apt-z { display: block; font: 10.5px var(--f-data); color: var(--ink-soft); }
+  .apt-eye { all: unset; cursor: pointer; color: var(--accent); font-size: 14px; padding: 0 4px; }
+  .apt-eye:focus-visible { outline: 2px solid var(--accent); }
+  .apt-plot { margin-top: 4px; }
+  .apt-plot section { animation: none; }
 
   /* propriedades: legenda */
   .car-crit { display: grid; gap: 3px; font-size: 12px; color: var(--ink-soft); }
@@ -309,6 +326,7 @@
   /* aviso da ferramenta ativa, ano grande, antes e depois */
   #tool-hint { top: calc(16px + env(safe-area-inset-top, 0px)); transform: translateX(-50%); padding: 7px 8px 7px 14px; display: flex; gap: 10px; align-items: center; font-size: 14px; max-width: calc(100vw - var(--side-w) - 32px); box-sizing: border-box; border-radius: 999px; z-index: 4; }
   #tool-hint button { all: unset; cursor: pointer; font-size: 18px; line-height: 1; color: var(--ink-soft); padding: 2px 6px; border-radius: 50%; }
+  #tool-hint button.hint-ok { font: 600 12px/1 var(--f-display); letter-spacing: .08em; text-transform: uppercase; color: var(--panel); background: var(--accent); padding: 7px 12px; border-radius: 999px; }
   #year-badge { position: fixed; top: calc(24px + env(safe-area-inset-top, 0px)); transform: translateX(-50%); font: 700 64px/1 var(--f-display); letter-spacing: .04em; color: #fff; text-shadow: 0 2px 12px rgba(0,0,0,.45), 0 0 2px rgba(0,0,0,.6); pointer-events: none; font-variant-numeric: tabular-nums; z-index: 3; }
   #tool-hint:not([hidden]) ~ #year-badge { top: calc(72px + env(safe-area-inset-top, 0px)); }
   #split { position: fixed; top: 0; bottom: 0; width: 44px; margin-left: -22px; cursor: ew-resize; touch-action: none; z-index: 3; }
@@ -336,13 +354,14 @@
   .cc-link { display: block; width: 100%; box-sizing: border-box; margin-top: 4px; padding: 5px 6px; font: 11px var(--f-data); color: var(--ink); background: var(--panel); border: 1px solid var(--panel-line); border-radius: 4px; }
   .cc-tabs { position: sticky; top: 0; z-index: 2; display: flex; gap: 2px; margin: 12px -20px 0; padding: 4px 20px 0; background: var(--panel); border-bottom: 1px solid var(--panel-line); overflow-x: auto; scrollbar-width: none; }
   .cc-tabs::-webkit-scrollbar { display: none; }
-  .cc-tabs button { all: unset; cursor: pointer; padding: 9px 8px; font: 600 12.5px/1 var(--f-display); letter-spacing: .07em; text-transform: uppercase; color: var(--ink-soft); border-bottom: 2px solid transparent; white-space: nowrap; }
+  .cc-tabs button { all: unset; cursor: pointer; padding: 9px 7px; font: 600 12.5px/1 var(--f-display); letter-spacing: .07em; text-transform: uppercase; color: var(--ink-soft); border-bottom: 2px solid transparent; white-space: nowrap; }
   .cc-tabs button:hover { color: var(--ink); }
   .cc-tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
   .cc-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   #car-card-body[data-tab="resumo"] .cc-grid > section:not([data-tab="resumo"]),
   #car-card-body[data-tab="terra"] .cc-grid > section:not([data-tab="terra"]),
   #car-card-body[data-tab="pasto"] .cc-grid > section:not([data-tab="pasto"]),
+  #car-card-body[data-tab="apt"] .cc-grid > section:not([data-tab="apt"]),
   #car-card-body[data-tab="agua"] .cc-grid > section:not([data-tab="agua"]),
   #car-card-body[data-tab="clima"] .cc-grid > section:not([data-tab="clima"]),
   #car-card-body[data-tab="viz"] .cc-grid > section:not([data-tab="viz"]) { display: none; }
@@ -612,6 +631,7 @@
             <input type="radio" name="surface" id="s-sat" value="satellite" checked><label for="s-sat"><i class="sv sv--sat"></i>Satélite</label>
             <input type="radio" name="surface" id="s-lc" value="landuse"><label for="s-lc"><i class="sv sv--lc"></i>Uso do solo</label>
             <input type="radio" name="surface" id="s-vig" value="vigor"><label for="s-vig"><i class="sv sv--vig"></i>Vigor</label>
+            <input type="radio" name="surface" id="s-apt" value="aptidao"><label for="s-apt"><i class="sv sv--apt"></i>Aptidão</label>
             <input type="radio" name="surface" id="s-alt" value="altitude"><label for="s-alt"><i class="sv sv--alt"></i>Altitude</label>
             <input type="radio" name="surface" id="s-solw" value="sol-inverno"><label for="s-solw"><i class="sv sv--solw"></i>Sol inverno</label>
             <input type="radio" name="surface" id="s-sols" value="sol-verao"><label for="s-sols"><i class="sv sv--sols"></i>Sol verão</label>
@@ -639,6 +659,19 @@
             <div class="ramp ramp--vig"></div>
             <div class="ramp-scale"><span id="vig-min"></span><span>NDVI · pouco verde → muito verde</span><span id="vig-max"></span></div>
             <p class="model-note" id="vig-note">O quanto a vegetação estava verde em 2026, pela Sentinel-2 (10 m). Pasto bem formado fica verde nas águas; o que segue marrom nas águas pode ser pasto fraco, solo exposto ou roçado. Mata fica sempre verde-escura.</p>
+          </div>
+          <div id="apt-panel" class="subpanel" hidden>
+            <div class="apt-modes" role="radiogroup" aria-label="O que mostrar">
+              <input type="radio" name="apt-mode" id="am-cap" value="cap" checked><label for="am-cap">Capacidade</label>
+              <input type="radio" name="apt-mode" id="am-crop" value="crop"><label for="am-crop">Cultura</label>
+              <input type="radio" name="apt-mode" id="am-mech" value="mech"><label for="am-mech">Mecanização</label>
+              <input type="radio" name="apt-mode" id="am-eros" value="eros"><label for="am-eros">Erosão</label>
+              <input type="radio" name="apt-mode" id="am-conf" value="conf"><label for="am-conf">Conflitos</label>
+            </div>
+            <label class="car-crit" id="apt-crop-row" hidden><span>Cultura</span> <select id="apt-crop"></select></label>
+            <p id="apt-state" class="model-state" role="status"></p>
+            <div id="apt-legend"></div>
+            <p class="model-note">Calculado pelo app a partir do relevo, do solo (SoilGrids), do sol e da geada, do uso do solo 2025 e da APP estimada. É estimativa de escritório: não substitui o laudo de um agrônomo.</p>
           </div>
           <div id="sol-panel" class="subpanel" hidden>
             <div class="ramp ramp--sol"></div>
@@ -742,6 +775,15 @@
             <div class="pf-chart"></div>
             <span class="pf-tip" hidden></span>
           </section>
+          <button type="button" class="tool" id="tool-plot" aria-pressed="false">
+            <i><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7l6-3 10 4-2 11-12 1z"/><circle cx="4" cy="7" r="1.3"/><circle cx="10" cy="4" r="1.3"/><circle cx="20" cy="8" r="1.3"/><circle cx="18" cy="19" r="1.3"/><circle cx="6" cy="20" r="1.3"/></svg></i>
+            <b>Planejar um talhão</b><small>Marque os cantos de uma área no mapa: aptidão, cultura, mecanização, erosão e época de plantio só daquele pedaço.</small></button>
+          <section id="plot-card" class="result" hidden aria-labelledby="plot-title">
+            <button type="button" class="card-close" data-close="plot" aria-label="Fechar">×</button>
+            <span class="eyebrow">Talhão desenhado</span>
+            <h2 id="plot-title"></h2>
+            <div id="plot-body" class="cc-grid apt-plot"></div>
+          </section>
           <button type="button" class="tool" id="tool-split" aria-pressed="false">
             <i><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="M12 2v20"/></svg></i>
             <b>Antes e depois</b><small>Uma divisória no mapa: de um lado o uso do solo de um ano antigo, do outro hoje.</small></button>
@@ -804,7 +846,7 @@
 
 <button type="button" id="ui-restore"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>Mostrar o menu</button>
 
-<div id="tool-hint" class="sheet map-c" role="status" hidden><span id="tool-hint-text"></span><button type="button" id="tool-hint-x" aria-label="Cancelar">×</button></div>
+<div id="tool-hint" class="sheet map-c" role="status" hidden><span id="tool-hint-text"></span><button type="button" id="tool-hint-ok" class="hint-ok" hidden>Concluir</button><button type="button" id="tool-hint-x" aria-label="Cancelar">×</button></div>
 <div id="year-badge" class="map-c" aria-live="polite" hidden></div>
 <div id="split" hidden>
   <div class="knob" aria-hidden="true">⇔</div>

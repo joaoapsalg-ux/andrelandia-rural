@@ -74,6 +74,7 @@ const FRAG = /* glsl */ `
   uniform sampler2D uNdvi;
   uniform float uVig;
   uniform vec2 uVigR;                // faixa de NDVI da rampa (muda com a estação)
+  uniform float uApt;                // aptidão da terra: cor (RGBA, grade de 30 m) no mesmo encaixe do vigor (uNdvi)
   // sombras de nuvens (ruído que se repete, levado pelo vento) e destaque da propriedade escolhida
   uniform sampler2D uCloudTex;
   uniform float uTime, uClouds, uSelFlash;
@@ -147,7 +148,7 @@ const FRAG = /* glsl */ `
 
     // superfícies (à esquerda da divisória "antes e depois": uso do solo do ano de comparação)
     bool before = uSplit >= 0.0 && gl_FragCoord.x < uSplit;
-    float land = before ? 1.0 : uLand, sat = before ? 0.0 : uSat, sol = before ? 0.0 : uSol, frost = before ? 0.0 : uFrost, vig = before ? 0.0 : uVig;
+    float land = before ? 1.0 : uLand, sat = before ? 0.0 : uSat, sol = before ? 0.0 : uSol, frost = before ? 0.0 : uFrost, vig = before ? 0.0 : uVig, apt = before ? 0.0 : uApt;
     float t = clamp((vElev - uMin) / (uMax - uMin), 0.0, 1.0);
     vec3 base = mix(uPaper, ramp(t), uHyps);
     vec2 lcUv = vec2(ovUv.x * uLcX.x + uLcX.y, ovUv.y * uLcX.z + uLcX.w);
@@ -195,6 +196,12 @@ const FRAG = /* glsl */ `
     imgLit *= mix(0.25, 1.0, smoothstep(-0.12, 0.08, uSunL.y));   // noite escurece
     col = mix(col, imgLit, sat);
     if (vig > 0.5) col *= 0.72 + 0.56 * dot(img, vec3(0.299, 0.587, 0.114));   // a textura da imagem (árvores, estradas) por baixo da cor
+    if (apt > 0.5) {   // aptidão: cor por cima da imagem apagada (onde a cor é transparente, só a imagem)
+      vec4 ac = texture2D(uNdvi, lcUv);
+      vec3 under = mix(vec3(dot(col, vec3(0.3, 0.59, 0.11))), col, 0.35) * 0.85;
+      vec3 lit = max(light * 1.05, vec3(0.72 * (1.0 - smoothstep(0.05, 0.45, uSunL.y))));
+      col = mix(under, ac.rgb * mix(vec3(1.0), lit, 0.6) * (0.8 + 0.35 * dot(img, vec3(0.299, 0.587, 0.114))), ac.a);
+    }
     if (frost > 0.5) {   // geada: imagem acinzentada e baixadas frias em branco-azulado
       float g = dot(imgLit, vec3(0.3, 0.59, 0.11));
       col = mix(vec3(g * 0.82), imgLit * 0.6, 0.25);
@@ -403,7 +410,7 @@ export class CellTerrain {
       uUpMask: { value: blank }, uUpRect: { value: new THREE.Vector4(0, 0, 1, 1) }, uUpOn: { value: 0 },
       uRel: { value: blank }, uRelX: { value: new THREE.Vector4(1, 0, 1, 0) }, uRelief: { value: 0 }, uFilm: { value: 0 },
       uSharp: { value: 0 }, uClarity: { value: 0 }, uTexel: { value: 1 / 1024 },
-      uNdvi: { value: blank }, uVig: { value: 0 }, uVigR: { value: new THREE.Vector2(0.45, 0.9) },
+      uNdvi: { value: blank }, uVig: { value: 0 }, uVigR: { value: new THREE.Vector2(0.45, 0.9) }, uApt: { value: 0 },
       uCloudTex: { value: blank }, uTime: { value: 0 }, uClouds: { value: 0 }, uSelFlash: { value: 0 },
       uGold: { value: 0 }, uMist: { value: 0 }, uNight: { value: 0 },
     };
@@ -799,6 +806,8 @@ export class CellTerrain {
   setBeforeTexture(tex) { this.shared.uLcA.value = this.#nearest(tex); }
   setSplit(px) { this.shared.uSplit.value = px; }
   setSolTexture(tex) { this.shared.uSolG.value = tex; }
+  /** aptidão: usa o encaixe de textura do vigor (os dois nunca aparecem juntos) */
+  setAptTexture(tex) { this.shared.uNdvi.value = tex ?? this.blank; }
   setVigorTexture(tex, range) { this.shared.uNdvi.value = tex ?? this.blank; if (range) this.shared.uVigR.value.set(range[0], range[1]); }
   // imóveis do CAR: textura de identificação (cobre a extensão), paleta 64×64 por índice e estado
   setCarTexture(tex) {
@@ -973,6 +982,8 @@ export class CellTerrain {
       u.uSol.value = surface === 'sol-inverno' ? 1 : surface === 'sol-verao' ? 2 : 0;
       u.uFrost.value = surface === 'geada' ? 1 : 0;
       u.uVig.value = surface === 'vigor' ? 1 : 0;
+      u.uApt.value = surface === 'aptidao' ? 1 : 0;
+      if (surface === 'aptidao') u.uSat.value = 1;   // a cor da aptidão vai por cima da imagem
       if (surface === 'geada') u.uSat.value = 1;   // a geada é desenhada sobre a imagem
       if (surface === 'sol-inverno') u.uSolR.value.set(1.6, 5.0);
       if (surface === 'sol-verao') u.uSolR.value.set(6.1, 7.4);
